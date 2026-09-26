@@ -33,6 +33,7 @@ import {
   queryLedgerEntry,
   readLeb128,
 } from '../soroban.js';
+import { decompressWasm } from './wasm-auditor.js';
 import { networkTargetFor } from './multi-network.js';
 import type { ContractPresence } from './multi-network.js';
 
@@ -239,7 +240,10 @@ export function contractEdges(
   wasm: Buffer,
   aliases: Readonly<Record<string, string>> = {},
 ): ContractEdge[] {
-  return edgesFromImports(contractId, readWasmImports(wasm), aliases);
+  // A deployed code entry can hold gzipped bytes, which are not a module until
+  // they are inflated; `readWasmImports` reads one section table, so it gets the
+  // inflated form.
+  return edgesFromImports(contractId, readWasmImports(decompressWasm(wasm)), aliases);
 }
 
 /** Options for {@link traceDependencyGraph}. */

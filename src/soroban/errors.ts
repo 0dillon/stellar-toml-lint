@@ -13,9 +13,10 @@
  * same XDR tables {@link https://github.com/stellar/stellar-xdr stellar-xdr}
  * ships, so the audit cannot drift away from the network's own definitions.
  */
-import { cereal, xdr } from '@stellar/stellar-base';
+import { xdr } from '@stellar/stellar-base';
 import type { Diagnostic, Rule, RuleOverrides, Severity } from '../types.js';
-import { CONTRACT_SPEC_SECTION, fetchContractWasm, wasmCustomSection } from '../soroban.js';
+import { fetchContractWasm } from '../soroban.js';
+import { extractContractSpecEntries } from './wasm-auditor.js';
 import { declaredContractRoots, rpcUrlForDocument } from './dependency-graph.js';
 
 const DUPLICATE_ERROR_CODE_RULE = 'soroban/duplicate-error-code';
@@ -124,26 +125,11 @@ function severityFor(
 }
 
 /**
- * Every `ScSpecEntry` in a contract's spec section, or `undefined` when the
- * bytes hold no readable section. Entries are a bare XDR stream, so the only
- * way to know where one ends is to let the reader walk the cursor.
+ * Every `ScSpecEntry` a contract's WASM carries. The reader is the one the SEP-41
+ * auditor uses, so a gzip- or zlib-compressed code entry decodes here too.
  */
 function specEntries(wasm: Buffer): xdr.ScSpecEntry[] {
-  const section = wasmCustomSection(wasm, CONTRACT_SPEC_SECTION);
-  if (section === undefined) return [];
-
-  try {
-    const reader = new cereal.XdrReader(section);
-    const entries: xdr.ScSpecEntry[] = [];
-    while (!reader.eof) {
-      // The published types still describe `read` as taking a Buffer, but the
-      // runtime consumes the same cursor `specFunctionNames` walks.
-      entries.push(xdr.ScSpecEntry.read(reader as unknown as Buffer));
-    }
-    return entries;
-  } catch {
-    return [];
-  }
+  return extractContractSpecEntries(wasm) ?? [];
 }
 
 /**

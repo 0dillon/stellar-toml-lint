@@ -91,6 +91,9 @@ const nodeShimPlugin = {
         ),
         loader: 'js',
       };
+    });
+  },
+};
 
 const banner = {
   js: 'var self = typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : this;',

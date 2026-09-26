@@ -1165,10 +1165,12 @@ node with no peers emits `overlay/isolated-node-zero-peers` (error); a node with
 peers emits `overlay/low-peer-count` (warning). The raw TCP transport is skipped in
 `--mock-fixtures` mode, which remains a no-network mode.
 
-**Overlay handshake** (with `--check-network --verify-overlay`) — each `VALIDATORS[i].HOST` is
-dialled and given the handshake a stellar-core peer performs: an unencrypted `HELLO` frame whose
-`AuthCert` the linter signs with a fresh ephemeral key, then the node's own `HELLO` read back. What
-that answers is whether the published `HOST` really is that node: a peer that never completes the
+**Overlay handshake** (with `--check-network --verify-overlay`) — a port that accepts a TCP
+connection (see _Validator peer-port reachability_) only proves something is listening. This check
+completes the exchange a stellar-core peer performs instead: an unencrypted `HELLO` frame whose
+`AuthCert` the linter signs with a fresh ephemeral key, then the node's own `HELLO` read back and its
+signature verified against the network that node names. That answers who is behind the published
+`HOST`: a peer that never completes the
 exchange emits `overlay/handshake-timeout` (error), one naming a different network or listening on a
 port other than the advertised one emits `overlay/network-mismatch` (error), one that cannot sign for
 the `VALIDATORS[i].PUBLIC_KEY` it is published under emits `overlay/public-key-mismatch` (error), and
