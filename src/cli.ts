@@ -91,8 +91,10 @@ import { createMockServer, DEFAULT_MOCK_PORT, formatRoutingTable } from './mock/
 import {
   runMigration,
   dryRun as dryRunMigration,
+  generateDiff,
   type MigrationTarget,
 } from './codemod/migrate.js';
+import { applyFixes } from './fix.js';
 import type { Diagnostic, LintResult, RuleOverrides, Severity } from './types.js';
 
 const VERSION = '0.1.0';
@@ -162,6 +164,7 @@ interface Cli {
   webhookUrl?: string;
   migrate?: string;
   dryRun?: boolean;
+  fix?: boolean;
   serveMock?: number;
 }
 
@@ -271,7 +274,8 @@ OPTIONS
     -v, --version
     -h, --help
         --migrate <target>  Run a code migration: sep41 or v2
-        --dry-run           Show migration diff without writing files
+        --fix               Apply safe autofixes to files
+        --dry-run           Preview autofix or migration diff without modifying files
        --monitor           Start a polling daemon that watches a URL for changes
        --interval <ms>     Polling interval in milliseconds (default 300)
        --on-change-webhook <url>
@@ -463,6 +467,22 @@ async function main(argv: string[]): Promise<number> {
         results.push({ name: cli.domain, result: domainResult });
       } else {
         const paths = await expandInputs(cli.paths.length > 0 ? cli.paths : [DEFAULT_PATH]);
+
+        if (cli.fix && cli.dryRun) {
+          for (const path of paths) {
+            const config = await loadConfig(path === '-' ? process.cwd() : dirname(resolve(path)));
+            const rules = { ...config.rules, ...cli.rules };
+            const source = path === '-' ? await readStdin() : await readFile(path, 'utf8');
+            const fileResult = lint(source, { rules });
+            const fixed = applyFixes(source, fileResult.diagnostics);
+            if (fixed !== source) {
+              const diff = generateDiff(source, fixed, path === '-' ? 'stdin' : path);
+              process.stdout.write(diff);
+            }
+          }
+          return 0;
+        }
+
         for (const path of paths) {
           const config = await loadConfig(path === '-' ? process.cwd() : dirname(resolve(path)));
           const fileStrict = cli.strict || config.strict;
@@ -470,7 +490,17 @@ async function main(argv: string[]): Promise<number> {
           maxWarnings ??= config.maxWarnings;
           const rules = { ...config.rules, ...cli.rules };
 
-          const source = path === '-' ? await readStdin() : await readFile(path, 'utf8');
+          let source = path === '-' ? await readStdin() : await readFile(path, 'utf8');
+
+          if (cli.fix && path !== '-') {
+            const preResult = lint(source, { rules });
+            const fixed = applyFixes(source, preResult.diagnostics);
+            if (fixed !== source) {
+              await writeFile(path, fixed, 'utf8');
+              source = fixed;
+            }
+          }
+
           let fileResult = lint(source, {
             strict: fileStrict,
             rules,
@@ -684,7 +714,7 @@ async function main(argv: string[]): Promise<number> {
           if (!cli.dryRun && migrationResult.applied) {
             await writeFile(filePath, migrationResult.source);
           }
-          const diffOutput = await dryRunMigration(source, target, fetchImpl);
+          const diffOutput = await dryRunMigration(source, target, fetchImpl, filePath);
           process.stdout.write(diffOutput);
           for (const diag of migrationDiagnostics) {
             process.stderr.write(`${diag.rule}: ${diag.message}\n`);
@@ -1293,6 +1323,10 @@ function parseArgs(argv: string[]): Cli | 'handled' {
         cli.migrate = value;
         break;
       }
+
+      case '--fix':
+        cli.fix = true;
+        break;
 
       case '--dry-run':
         cli.dryRun = true;

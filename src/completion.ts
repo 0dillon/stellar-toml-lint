@@ -131,6 +131,8 @@ const FLAGS: readonly FlagSpec[] = [
   },
   { long: '--version', short: '-v', description: 'Print the version' },
   { long: '--help', short: '-h', description: 'Print usage' },
+  { long: '--fix', description: 'Apply safe autofixes to files' },
+  { long: '--dry-run', description: 'Preview autofix or migration diff without modifying files' },
 ];
 
 /** Rule-override flags, which complete to the registered rule ids. */

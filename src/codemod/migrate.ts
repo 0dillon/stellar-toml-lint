@@ -40,12 +40,12 @@ async function queryHorizon(
   }
 }
 
-function generateUnifiedDiff(original: string, migrated: string): string {
+function generateUnifiedDiff(original: string, migrated: string, filePath = 'source.toml'): string {
   const origLines = original.split('\n');
   const migLines = migrated.split('\n');
   const result: string[] = [];
-  result.push('--- a/source.toml');
-  result.push('+++ b/source.toml');
+  result.push(`--- a/${filePath}`);
+  result.push(`+++ b/${filePath}`);
 
   const edits = computeDiffEdits(origLines, migLines);
   for (const edit of edits) {
@@ -334,17 +334,18 @@ export async function migrate(
   return { source: migrated, diff, conflicts, applied };
 }
 
-export function generateDiff(original: string, migrated: string): string {
-  return generateUnifiedDiff(original, migrated);
+export function generateDiff(original: string, migrated: string, filePath = 'source.toml'): string {
+  return generateUnifiedDiff(original, migrated, filePath);
 }
 
 export async function dryRun(
   source: string,
   target: MigrationTarget,
   fetchImpl?: typeof fetch,
+  filePath = 'source.toml',
 ): Promise<string> {
   const result = await migrate(source, target, fetchImpl);
-  return result.diff;
+  return generateUnifiedDiff(source, result.source, filePath);
 }
 
 export async function runMigration(

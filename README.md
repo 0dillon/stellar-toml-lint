@@ -284,6 +284,8 @@ failure.
 | `--badge-svg <file>`        | Generate an SVG compliance badge                                                                                                                                           |
 | `--badge-json <file>`       | Generate a Shields.io JSON endpoint                                                                                                                                        |
 | `--json-schema`             | Print a JSON Schema (Draft 2020-12) for stellar.toml to stdout                                                                                                             |
+| `--fix`                     | Automatically fix safe violations in place                                                                                                                                 |
+| `--dry-run`                 | Preview autofix or migration unified diff without modifying files on disk                                                                                                  |
 
 ### Soroban contract audits
 
@@ -567,15 +569,16 @@ Migrates classic asset declarations to Soroban SAC contract IDs:
 stellar-toml-lint --migrate v2 stellar.toml
 ```
 
-#### `--dry-run`
+#### `--dry-run` and `--fix`
 
-Shows the migration diff preview without writing any files:
+Shows the unified diff preview for autofixes (`--fix`) or code migrations (`--migrate`) without modifying any files on disk:
 
 ```bash
+stellar-toml-lint --fix --dry-run stellar.toml
 stellar-toml-lint --migrate sep41 --dry-run stellar.toml
 ```
 
-Both `--migrate` and `--dry-run` can be combined with any existing flags. When `--migrate` is set, the linter runs the migration first, shows the unified diff, and optionally writes the migrated source back to disk (unless `--dry-run` is specified). Diagnostics are emitted as `codemod/migration-conflict` (error) and `codemod/migration-applied` (info).
+When passed with `--fix`, the linter calculates all safe mechanical fixes, outputs the unified diff of modifications to `stdout`, and exits without writing changes to the filesystem. When `--fix` is passed without `--dry-run`, fixes are written directly to the file. Both `--migrate` and `--dry-run` can be combined with any existing flags. When `--migrate` is set, the linter runs the migration first, shows the unified diff, and optionally writes the migrated source back to disk (unless `--dry-run` is specified). Diagnostics are emitted as `codemod/migration-conflict` (error) and `codemod/migration-applied` (info).
 
 ## In the browser
 
