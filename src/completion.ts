@@ -30,6 +30,7 @@ export function isCompletionShell(value: string): value is CompletionShell {
 /** `--format` choices, kept in step with the `Format` union in `cli.ts`. */
 const FORMATS = [
   'text',
+  'summary',
   'json',
   'ndjson',
   'sarif',
@@ -38,10 +39,14 @@ const FORMATS = [
   'html',
   'checkstyle',
   'markdown',
+  'pr-comment',
 ] as const;
 
 /** `--graph` choices. */
 const GRAPH_FORMATS = ['mermaid', 'dot'] as const;
+
+/** `--contract-graph` choices. */
+const CONTRACT_GRAPH_FORMATS = ['json', 'mermaid'] as const;
 
 interface FlagSpec {
   /** Long form, e.g. `--format`. */
@@ -77,16 +82,26 @@ const FLAGS: readonly FlagSpec[] = [
   { long: '--interactive', short: '-i', description: 'Full-screen dashboard of the findings' },
   { long: '--lsp', description: 'Run as a Language Server on stdio' },
   { long: '--quiet', short: '-q', description: 'Report errors only' },
+  { long: '--count', description: 'Print only problem count totals' },
   { long: '--show-help-urls', description: 'Print the spec link for each finding' },
   { long: '--no-suggestions', description: 'Hide diagnostic suggestions' },
   { long: '--check-network', description: 'Verify accounts and endpoints online' },
   { long: '--audit-quorum', description: 'Solve declared quorum sets for split-brain risk' },
   { long: '--verify-sep10', description: 'Verify SEP-10 nonce replay resistance' },
+  { long: '--audit-security', description: 'Audit cross-server token binding' },
+  { long: '--verify-sep6', description: 'Run SEP-6 programmatic integration tester' },
+  { long: '--verify-sep31', description: 'Audit SEP-31 cross-border payment lifecycle' },
   { long: '--crawl-peers', description: 'Discover and audit overlay peers' },
+  { long: '--verify-overlay', description: 'Handshake with each validator over the overlay' },
   { long: '--verify-dnssec', description: 'Compare DNSSEC-validating DNS resolvers' },
   { long: '--check-contracts', description: 'Verify Soroban contracts on chain' },
   { long: '--rpc-url', description: 'Soroban RPC endpoint', takesValue: true },
   { long: '--soroban-rpc', description: 'Soroban RPC endpoint (alias)', takesValue: true },
+  { long: '--simulate-soroban', description: 'Dry-run SEP-41 calls against Soroban RPC' },
+  {
+    long: '--soroban-rent-audit',
+    description: 'Audit Soroban contract storage footprint and rent',
+  },
   { long: '--mock-fixtures', description: 'Serve network checks from fixtures', takesValue: true },
   { long: '--serve-mock', description: 'Run a local mock anchor server' },
   { long: '--webhook-slack', description: 'Slack webhook URL', takesValue: true },
@@ -97,6 +112,11 @@ const FLAGS: readonly FlagSpec[] = [
   { long: '--generate-openapi', description: 'Write an OpenAPI 3.1 spec', takesValue: true },
   { long: '--graph', description: 'Generate an architecture diagram', values: GRAPH_FORMATS },
   { long: '--graph-contracts', description: 'Include Soroban contracts in the diagram' },
+  {
+    long: '--contract-graph',
+    description: 'Print which declared contract calls which',
+    values: CONTRACT_GRAPH_FORMATS,
+  },
   { long: '--graph-validators', description: 'Include validators in the diagram' },
   { long: '--graph-color', description: 'Color diagram nodes by protocol type' },
   { long: '--policy', description: 'Evaluate an enterprise policy file', takesValue: true },

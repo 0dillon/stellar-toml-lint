@@ -16,6 +16,7 @@ export { PRESETS, PRESET_NAMES, resolvePreset } from './presets.js';
 export type { Preset, PresetName } from './presets.js';
 export {
   formatText,
+  formatCount,
   formatJson,
   formatSarif,
   formatGithub,
@@ -23,10 +24,20 @@ export {
   formatHtml,
   formatCheckstyle,
   formatMarkdown,
+  formatPrComment,
 } from './reporters.js';
 export type { TextReporterOptions } from './reporters.js';
 export { probeTls } from './tls.js';
 export type { TlsProbe } from './tls.js';
+export {
+  checkPeerPortReachability,
+  probeTcpPort,
+  validatorHostsOf,
+  peerPortRule,
+  PEER_PORT_UNREACHABLE_RULE,
+  DEFAULT_PROBE_TIMEOUT_MS,
+} from './validators/net-probe.js';
+export type { TcpPortProbe } from './validators/net-probe.js';
 export { createFixtureFetch, fixtureCandidates, MissingFixtureError } from './mock-fixtures.js';
 export type { FixtureFile } from './mock-fixtures.js';
 export {
@@ -87,6 +98,60 @@ export type {
   PeerCrawlResult,
 } from './overlay/crawler.js';
 export {
+  checkOverlayHandshake,
+  decodeStellarMessage,
+  decodeAuthenticatedMessage,
+  encodeAuth,
+  encodeAuthCert,
+  encodeAuthenticatedMessage,
+  encodeOverlayFrame,
+  overlayFrameLength,
+  overlayMac,
+  verifyOverlayMac,
+  deriveSharedMacKey,
+  deriveMacKeys,
+  macSigningInput,
+  encodeHello,
+  failureFindings,
+  generateEphemeralIdentity,
+  helloFindings,
+  authCert,
+  authCertDigest,
+  authCertPreimage,
+  signedAuthCert,
+  verifyAuthCert,
+  networkIdForPassphrase,
+  sharedSecret,
+  validatorEndpoints,
+  overlayHandshakeRules,
+  overlayHandshakeRuleIds,
+  OVERLAY_HANDSHAKE_TIMEOUT_RULE,
+  OVERLAY_NETWORK_MISMATCH_RULE,
+  OVERLAY_PUBLIC_KEY_MISMATCH_RULE,
+  OVERLAY_PROTOCOL_VERSION_OUTDATED_RULE,
+  OVERLAY_MESSAGE_AUTH,
+  OVERLAY_MESSAGE_ERROR,
+  OVERLAY_MESSAGE_HELLO,
+  OVERLAY_PROTOCOL_VERSION,
+  OVERLAY_HANDSHAKE_TIMEOUT_MS,
+  OVERLAY_AUTH_FLOW_CONTROL_FLAGS,
+  OVERLAY_FRAME_CONTINUATION_BIT,
+  OVERLAY_MAC_BYTES,
+  ENVELOPE_TYPE_AUTH,
+} from './overlay/handshake.js';
+export type {
+  AnnouncedHello,
+  EphemeralIdentity,
+  HandshakeFailure,
+  HandshakeOptions,
+  HandshakeOutcome,
+  OverlayEnvelope,
+  OverlayPeerRole,
+  OverlayTransport,
+  PeerHello,
+  ValidatorEndpoint,
+} from './overlay/handshake.js';
+export {
   checkHistoryPublish,
   checkHistoryPublishState,
   checkHistoryPublishValidator,
@@ -145,6 +210,112 @@ export type {
   DnsResolver,
   DnsResolverResult,
 } from './security/dns-integrity.js';
+export {
+  parseSep7Uri,
+  validateSep7Uri,
+  verifySep7Signature,
+  signSep7Uri,
+  checkSep7Uris,
+  sep7Rules,
+  sep7RuleIds,
+  INVALID_URI_SCHEME_RULE,
+  INVALID_SIGNATURE_RULE,
+  UNSUPPORTED_REPLACEMENT_FIELD_RULE,
+} from './protocols/sep7.js';
+export type { ParsedSep7Uri, Sep7Options } from './protocols/sep7.js';
+
+export {
+  checkTokenBinding,
+  acquireSep10Token,
+  parseJwtPayload,
+  JWT_REJECTED_RULE,
+  JWT_DOMAIN_MISMATCH_RULE,
+} from './security/token-binding.js';
+export type { TokenBindingOptions } from './security/token-binding.js';
+
+export {
+  verifySep6Integration,
+  sep6IntegrationRules,
+  sep6IntegrationRuleIds,
+  DEPOSIT_PARAMETER_MISMATCH_RULE,
+  FEE_CALCULATION_MISMATCH_RULE,
+  INVALID_TRANSACTION_STATUS_RULE,
+} from './protocols/sep6.js';
+export type { Sep6IntegrationOptions } from './protocols/sep6.js';
+
+export {
+  verifySep31,
+  sep31Rules,
+  sep31RuleIds,
+  INFO_SCHEMA_INVALID_RULE,
+  ASSET_UNSUPPORTED_RULE,
+  MISSING_KYC_REQUIREMENTS_RULE,
+} from './protocols/sep31.js';
+export type { Sep31Options } from './protocols/sep31.js';
+
+export {
+  verifySep8,
+  buildSyntheticSep8Transaction,
+  isValidTransactionXdr,
+  sep8Rules,
+  sep8RuleIds,
+  APPROVAL_SERVER_UNRESPONSIVE_RULE,
+  INVALID_RESPONSE_STATUS_RULE,
+  INVALID_REVISED_TX_XDR_RULE,
+} from './protocols/sep8.js';
+export type { Sep8Options } from './protocols/sep8.js';
+
+export {
+  auditContractWasm,
+  auditTomlContractWasm,
+  verifySep41Wasm,
+  decompressWasm,
+  extractContractSpecEntries,
+  getWasmCustomSection,
+  wasmAuditorRules,
+  wasmAuditorRuleIds,
+  WASM_NOT_FOUND_RULE,
+  MISSING_CONTRACT_SPEC_RULE,
+  MISSING_SEP41_FUNCTION_RULE,
+  INVALID_SEP41_SIGNATURE_RULE,
+  SEP41_MANDATORY_FUNCTIONS,
+} from './soroban/wasm-auditor.js';
+export type { WasmAuditorOptions } from './soroban/wasm-auditor.js';
+
+export {
+  auditContractStorageFootprint,
+  auditTomlStorageFootprint,
+  getContractStorageFootprint,
+  calculateStorageFootprint,
+  calculateProjectedRent,
+  estimateTtlExpiration,
+  storageFootprintRules,
+  storageFootprintRuleIds,
+  TTL_EXPIRING_SOON_RULE,
+  HIGH_STORAGE_FOOTPRINT_RULE,
+  DEFAULT_MAX_STORAGE_BYTES,
+  DEFAULT_RENT_FEE_PER_BYTE_PER_100K,
+  TTL_EXPIRING_THRESHOLD_LEDGERS,
+} from './soroban/storage-footprint.js';
+export type {
+  ContractStorageFootprint,
+  StorageFootprintOptions,
+} from './soroban/storage-footprint.js';
+
+export {
+  auditContractAuth,
+  auditTomlContractAuth,
+  verifyContractAuth,
+  extractFunctionSpecs,
+  authAuditorRules,
+  authAuditorRuleIds,
+  MISSING_AUTH_PARAMETER_RULE,
+  UNSAFE_UNAUTHORIZED_MINT_RULE,
+  STATE_MUTATING_AUTH_FUNCTIONS,
+  SEP42_SPEC_URL,
+} from './soroban/auth-auditor.js';
+export type { AuthAuditorOptions, ContractFunctionSpec } from './soroban/auth-auditor.js';
+
 export type {
   Diagnostic,
   Fix,
