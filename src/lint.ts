@@ -25,6 +25,7 @@ import { probeTls, type TlsProbe } from './tls.js';
 import { checkOrgUrl } from './rules/org-url-check.js';
 import { checkDocCompliance } from './rules/doc-compliance.js';
 import { checkSep6 } from './cross-sep/sep6.js';
+import { checkHistoryArchive } from './rules/history-url-check.js';
 
 /** Severity ordering used for sorting and for `--max-warnings` style counts. */
 const SEVERITY_RANK: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
@@ -281,6 +282,9 @@ export async function lintDomain(
   // same treatment the file itself just got: reachability, CORS, content type,
   // and size.
   const images = await probeImages(fileResult.parsed, fetchImpl, options.rules);
+  const historyDiagnostics = fileResult.parsed
+    ? await checkHistoryArchive(fileResult.parsed, fetchImpl, { rules: options.rules })
+    : [];
 
   // The identity anchor itself must also be alive: probe ORG_URL so a dead
   // endpoint is caught here rather than by the next wallet that vetts the

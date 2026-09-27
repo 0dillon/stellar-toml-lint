@@ -1158,6 +1158,13 @@ browser clients. A connection, TLS, timeout, or invalid-status failure emits
 `sep3/missing-cors-headers`. This is an endpoint liveness and transport check, not a full signature
 verification.
 
+**History archive state validation** (with `--domain` or `--check-network`) — every declared
+`[[VALIDATORS]].HISTORY` URL is checked for `/.well-known/stellar-history.json` relative to its
+archive root. The request follows redirects and requires HTTP 200, valid JSON, an integer `version`
+of at least 1, a non-empty `server`, and a positive integer `currentLedger`. An HTTP or transport
+failure emits `validators/history-archive-unreachable` (error); invalid JSON or schema emits
+`validators/history-archive-malformed` (error). These network checks do not run for offline linting.
+
 **History publish validation** (with `--check-network`) — each validator `HISTORY` archive is
 checked for the three most recent checkpoints. The audit verifies that `ledger-*.xdr.gz`,
 `transactions-*.xdr.gz`, and `results-*.xdr.gz` are present and non-empty, and compares
