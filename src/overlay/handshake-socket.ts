@@ -1,195 +1,173 @@
 /**
  * The socket half of the overlay handshake.
  *
- * Everything here needs a Node runtime — `node:net` for the dial, `node:crypto`
- * for HKDF and ChaCha20-Poly1305 — so it lives apart from `handshake.ts`, which
- * imports it lazily. A lint run in a browser or a worker never loads this file,
- * exactly as the peer crawler keeps `node-connector.ts` to itself.
+ * Everything here needs a Node runtime — `node:net` for the dial — so it lives
+ * apart from `handshake.ts`, which imports it lazily. A lint run in a browser or
+ * a worker never loads this file, exactly as the peer crawler keeps
+ * `node-connector.ts` to itself. The framing, the cert signature and the MAC
+ * keys are all in `handshake.ts`, because those are checkable without a socket.
  *
  * On the wire, in the order the overlay speaks it:
  *
- * 1. each side opens with an unencrypted `HELLO`, framed as
- *    `uint32 length ‖ StellarMessage`. Every finding this package reports comes
- *    out of that frame, which is why linting a file never requires decryption.
+ * 1. each side opens with an unencrypted `HELLO`: an `AuthenticatedMessage` with
+ *    sequence 0 and an all-zero MAC, wrapped in a length header. Every finding
+ *    this package reports comes out of that frame, which is why linting a file
+ *    never requires a key.
  * 2. a `HELLO` carries an `AuthCert` — an ephemeral Curve25519 key, an expiry,
- *    and an Ed25519 signature over both plus the network hash — so the node ID
- *    the peer claims is checked against a signature rather than against a claim.
- *    The hash in that signature is the one the `HELLO` names, which keeps the
- *    identity question separate from the network question.
- * 3. both sides then derive 96 bytes with HKDF-SHA256 over their X25519 shared
- *    secret (send key, receive key, MAC key, mirrored by role) and exchange one
- *    `AUTH` frame as `nonce ‖ ciphertext ‖ tag ‖ mac`, sealed with
- *    ChaCha20-Poly1305 and authenticated with HMAC-SHA256.
+ *    and an Ed25519 signature over the network hash, the auth envelope type,
+ *    both, and the peer's node ID — so the node ID the peer claims is checked
+ *    against a signature rather than against a claim. A node verifies that
+ *    signature against the network *it* is on, before it answers.
+ * 3. both sides then derive two MAC keys from the X25519 secret between the
+ *    announced Curve25519 keys and both `HELLO` nonces, and the caller sends an
+ *    `AUTH` under them. The responder answers with its own `AUTH`, and an echo
+ *    that authenticates is proof the two peers agree on the key — which only
+ *    peers holding the same pair of ephemeral keys can do.
  * 4. the connection closes.
  *
- * Step 3 is attempted and never required: what a node sends after its `HELLO`
- * depends on its overlay version and on whether it decided to keep this
- * connection at all, so an echo that does not open means "the AEAD path was not
- * negotiated with us" rather than "the file is wrong". Step 2 is required — a
- * peer that cannot sign with the node ID it announces is not that peer.
+ * Step 3 is attempted and never required: a node that answers `HELLO` and then
+ * sends something else, or nothing, has still told us who it is and what network
+ * it is on. Step 2 is required — a peer that cannot sign with the node ID it
+ * announces is not that peer.
  */
 import { createConnection, type Socket } from 'node:net';
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHmac,
-  hkdfSync,
-  randomBytes,
-  timingSafeEqual,
-} from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { StrKey } from '@stellar/stellar-base';
 import {
+  OVERLAY_AUTH_FLOW_CONTROL_FLAGS,
+  OVERLAY_HANDSHAKE_TIMEOUT_MS,
+  OVERLAY_MAC_BYTES,
+  OVERLAY_PROTOCOL_VERSION,
+  decodeAuthenticatedMessage,
   decodeStellarMessage,
+  deriveMacKeys,
+  deriveSharedMacKey,
+  encodeAuthenticatedMessage,
   encodeAuth,
   encodeHello,
+  encodeOverlayFrame,
+  generateEphemeralIdentity,
   networkIdForPassphrase,
+  overlayFrameLength,
+  overlayMac,
   sharedSecret,
   signedAuthCert,
   verifyAuthCert,
-  OVERLAY_HANDSHAKE_TIMEOUT_MS,
-  OVERLAY_MESSAGE_AUTH,
-  OVERLAY_PROTOCOL_VERSION,
-  generateEphemeralIdentity,
+  verifyOverlayMac,
   type AnnouncedHello,
   type EphemeralIdentity,
   type HandshakeFailure,
   type HandshakeOptions,
   type HandshakeOutcome,
+  type OverlayEnvelope,
   type PeerHello,
   type ValidatorEndpoint,
 } from './handshake.js';
-import { frameOverlayMessage, OVERLAY_MAX_FRAME_BYTES } from './crawler.js';
+import { OVERLAY_MAX_FRAME_BYTES } from './crawler.js';
 
-export { generateEphemeralIdentity, signedAuthCert, verifyAuthCert };
+export {
+  authCertDigest,
+  authCertPreimage,
+  deriveMacKeys,
+  deriveSharedMacKey,
+  generateEphemeralIdentity,
+  signedAuthCert,
+  verifyAuthCert,
+} from './handshake.js';
 export type { EphemeralIdentity };
 
-const NONCE_BYTES = 12;
-const TAG_BYTES = 16;
-const MAC_BYTES = 32;
-const KEY_BYTES = 32;
-/** A `HELLO` is ~240 bytes; a peer that sends megabytes is not answering us. */
-const MAX_HELLO_BYTES = 4096;
-
-const HKDF_INFO = Buffer.from('stellar-overlay-auth-v1', 'utf8');
-
-/** The three keys one direction of a handshake uses. */
-export interface SessionKeys {
-  send: Buffer;
-  receive: Buffer;
-  mac: Buffer;
-}
+/**
+ * stellar-core rejects a frame whose payload is larger than this while no key
+ * exists yet, so a `HELLO` is the only thing that can arrive this early.
+ */
+const MAX_UNAUTHENTICATED_FRAME_BYTES = 0x1000;
 
 /**
- * HKDF-SHA256 over the X25519 shared secret, split into send/receive/MAC and
- * mirrored by role so the two peers agree on who reads which half.
+ * The ledger protocol our `HELLO` announces. It is informational — a peer
+ * negotiates ledgers over `GET_LEDGER` — but it should still describe the ledger
+ * we claim to be on, and mainnet runs 29.
  */
-export function deriveSessionKeys(
-  sharedSecret: Uint8Array,
-  salt: Uint8Array,
-  oursAreFirst: boolean,
-): SessionKeys {
-  const material = Buffer.from(
-    hkdfSync('sha256', Buffer.from(sharedSecret), Buffer.from(salt), HKDF_INFO, KEY_BYTES * 3),
-  );
-  const first = material.subarray(0, KEY_BYTES);
-  const second = material.subarray(KEY_BYTES, KEY_BYTES * 2);
-  const mac = material.subarray(KEY_BYTES * 2, KEY_BYTES * 3);
-  return oursAreFirst
-    ? { send: Buffer.from(first), receive: Buffer.from(second), mac: Buffer.from(mac) }
-    : { send: Buffer.from(second), receive: Buffer.from(first), mac: Buffer.from(mac) };
-}
-
-/**
- * `nonce ‖ ciphertext ‖ tag ‖ mac`, where the AEAD additionally binds the
- * payload to `header` so a sealed frame cannot be replayed into another slot of
- * the exchange.
- */
-export function sealFrame(keys: SessionKeys, plaintext: Uint8Array, header: Uint8Array): Buffer {
-  const nonce = randomBytes(NONCE_BYTES);
-  const cipher = createCipheriv('chacha20-poly1305', keys.send, nonce, {
-    authTagLength: TAG_BYTES,
-  });
-  cipher.setAAD(Buffer.from(header), { plaintextLength: plaintext.length });
-  const body = Buffer.concat([
-    cipher.update(Buffer.from(plaintext)),
-    cipher.final(),
-    cipher.getAuthTag(),
-  ]);
-  const frame = Buffer.concat([nonce, body]);
-  return Buffer.concat([frame, createHmac('sha256', keys.mac).update(frame).digest()]);
-}
-
-/** The inverse of {@link sealFrame}; `undefined` when authentication fails. */
-export function openFrame(
-  keys: SessionKeys,
-  frame: Uint8Array,
-  header: Uint8Array,
-): Buffer | undefined {
-  const bytes = Buffer.from(frame);
-  if (bytes.length < NONCE_BYTES + TAG_BYTES + MAC_BYTES) return undefined;
-  const sealed = bytes.subarray(0, bytes.length - MAC_BYTES);
-  const mac = bytes.subarray(bytes.length - MAC_BYTES);
-  const expected = createHmac('sha256', keys.mac).update(sealed).digest();
-  if (mac.length !== expected.length || !timingSafeEqual(mac, expected)) return undefined;
-
-  const nonce = sealed.subarray(0, NONCE_BYTES);
-  const body = sealed.subarray(NONCE_BYTES);
-  const ciphertext = body.subarray(0, body.length - TAG_BYTES);
-  try {
-    const decipher = createDecipheriv('chacha20-poly1305', keys.receive, nonce, {
-      authTagLength: TAG_BYTES,
-    });
-    decipher.setAAD(Buffer.from(header), { plaintextLength: ciphertext.length });
-    decipher.setAuthTag(body.subarray(body.length - TAG_BYTES));
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  } catch {
-    return undefined;
-  }
-}
-
-/** The `AUTH` echo is sealed against the message type it carries. */
-function authHeader(): Buffer {
-  const header = Buffer.alloc(8);
-  header.writeUInt32BE(OVERLAY_MESSAGE_AUTH, 0);
-  return header;
-}
+const LEDGER_PROTOCOL_VERSION = 29;
 
 /** One step of the exchange: a whole frame, or the failure that stopped us. */
-type Step = { frame: Uint8Array } | { failure: HandshakeFailure; detail?: string };
+type Step = { frame: Buffer } | { failure: HandshakeFailure; detail?: string };
 
 /**
- * Waits for a single frame and rejects nothing: a timeout, a closed socket, or a
- * malformed length all come back as a classified failure, because a peer that is
- * down is a finding about the file rather than an error in the run.
+ * One reader per socket, yielding each frame the peer sends. A reader that
+ * started per step would lose whatever arrived in the same packet as the
+ * `HELLO`, and a node in a hurry sends its `AUTH` immediately after.
  */
-function nextFrame(socket: Socket, stopped: (message: string) => Step): Promise<Step> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let buffer: Uint8Array = new Uint8Array(0);
+interface FrameReader {
+  /** The next frame, or the failure that ended the exchange. */
+  next: () => Promise<Step>;
+}
 
-    const finish = (step: Step): void => {
-      if (settled) return;
-      settled = true;
-      socket.off('data', onData);
-      socket.off('close', onClose);
-      socket.off('error', onError);
-      resolve(step);
-    };
-    const onData = (chunk: Uint8Array): void => {
-      buffer = new Uint8Array([...buffer, ...chunk]);
-      if (buffer.length < 4) return;
-      const length = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength).getUint32(0);
-      if (length === 0 || length > MAX_HELLO_BYTES) {
-        finish({ failure: 'protocol', detail: `peer declared a ${length}-byte frame` });
-        return;
-      }
-      if (buffer.length >= length + 4) finish({ frame: buffer.subarray(4, length + 4) });
-    };
-    const onClose = (): void => finish(stopped('the peer closed the connection mid-handshake'));
-    const onError = (error: Error): void => finish(stopped(error.message));
-    socket.on('data', onData);
-    socket.once('close', onClose);
-    socket.once('error', onError);
+function readOverlayFrames(socket: Socket, timeoutMs: number): FrameReader {
+  let buffer: Buffer = Buffer.alloc(0);
+  let stopped: Step | undefined;
+  const waiting: ((step: Step) => void)[] = [];
+
+  const settle = (step: Step): void => {
+    const waiter = waiting.shift();
+    if (waiter !== undefined) waiter(step);
+    else stopped = step;
+  };
+
+  const take = (): Buffer | undefined => {
+    if (buffer.length < 4) return undefined;
+    const length = overlayFrameLength(buffer.subarray(0, 4));
+    if (length === 0 || length > OVERLAY_MAX_FRAME_BYTES) {
+      buffer = Buffer.alloc(0);
+      settle({ failure: 'protocol', detail: `peer declared a ${length}-byte frame` });
+      return undefined;
+    }
+    if (buffer.length < length + 4) return undefined;
+    const frame = buffer.subarray(4, length + 4);
+    buffer = buffer.subarray(length + 4);
+    return frame;
+  };
+
+  socket.on('data', (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    for (;;) {
+      const frame = take();
+      if (frame === undefined) return;
+      settle({ frame });
+    }
+  });
+  socket.once('close', () =>
+    settle({ failure: 'protocol', detail: 'the peer closed the connection mid-handshake' }),
+  );
+  socket.once('error', (error: Error) => settle({ failure: 'protocol', detail: error.message }));
+  socket.setTimeout(timeoutMs, () =>
+    settle({ failure: 'timeout', detail: `no overlay reply within ${timeoutMs}ms` }),
+  );
+
+  return {
+    next: () =>
+      new Promise<Step>((resolve) => {
+        if (stopped !== undefined) {
+          const step = stopped;
+          stopped = undefined;
+          resolve(step);
+          return;
+        }
+        waiting.push(resolve);
+      }),
+  };
+}
+
+/** Resolves once the TCP connection lands or the dial fails outright. */
+function connectionStep(socket: Socket): Promise<Step> {
+  return new Promise((resolve) => {
+    socket.once('connect', () => resolve({ frame: Buffer.alloc(0) }));
+    socket.once('error', (error: Error) =>
+      resolve({
+        failure:
+          (error as NodeJS.ErrnoException).code === 'ECONNREFUSED' ? 'unreachable' : 'timeout',
+        detail: error.message,
+      }),
+    );
   });
 }
 
@@ -207,45 +185,64 @@ export async function performOverlayHandshake(
       ? new Uint8Array(32)
       : networkIdForPassphrase(options.passphrase);
   const identity = generateEphemeralIdentity();
+  const ourNonce = randomBytes(32);
   // The cert is valid for the run plus a minute; a peer that would accept a
   // much longer window is not the peer this file is describing.
   const expiration = Math.floor(Date.now() / 1000) + Math.ceil(timeoutMs / 1000) + 60;
 
   const socket = createConnection({ host: endpoint.host, port: endpoint.port });
   socket.setNoDelay(true);
-  const deadline = new Promise<Step>((resolve) => {
-    socket.setTimeout(timeoutMs, () =>
-      resolve({ failure: 'timeout', detail: `no overlay reply within ${timeoutMs}ms` }),
-    );
-  });
+  const frames = readOverlayFrames(socket, timeoutMs);
 
   try {
-    const connected = await Promise.race([connectionStep(socket), deadline]);
+    const connected = await connectionStep(socket);
     if ('failure' in connected) return { endpoint, ...connected };
 
     socket.write(
-      frameOverlayMessage(
-        encodeHello({
-          ledgerVersion: 1,
-          overlayVersion: options.overlayVersion ?? OVERLAY_PROTOCOL_VERSION,
-          overlayMinVersion: 1,
-          networkId,
-          versionStr: 'stellar-toml-lint',
-          listeningPort: endpoint.port,
-          nodePublic: identity.nodePublic,
-          cert: signedAuthCert(identity, expiration, networkId),
-          nonce: randomBytes(32),
-        }),
+      encodeOverlayFrame(
+        encodeAuthenticatedMessage(
+          encodeHello({
+            ledgerVersion: LEDGER_PROTOCOL_VERSION,
+            overlayVersion: options.overlayVersion ?? OVERLAY_PROTOCOL_VERSION,
+            overlayMinVersion: 1,
+            networkId,
+            versionStr: 'stellar-toml-lint',
+            // We never listen, and a node drops a HELLO naming port 0 before it
+            // answers, so the handshake announces the port it is dialling.
+            listeningPort: endpoint.port,
+            nodePublic: identity.nodePublic,
+            cert: signedAuthCert(identity, expiration, networkId),
+            nonce: ourNonce,
+          }),
+        ),
       ),
     );
 
-    const answer = await Promise.race([
-      nextFrame(socket, (detail) => ({ failure: 'protocol', detail })),
-      deadline,
-    ]);
-    if ('failure' in answer) return { endpoint, ...answer };
+    const answer = await frames.next();
+    if ('failure' in answer) {
+      return {
+        endpoint,
+        failure: answer.failure,
+        ...(answer.detail === undefined ? {} : { detail: answer.detail }),
+      };
+    }
+    if (answer.frame.length > MAX_UNAUTHENTICATED_FRAME_BYTES) {
+      return {
+        endpoint,
+        failure: 'protocol',
+        detail: `peer sent a ${answer.frame.length}-byte frame before either side had a key`,
+      };
+    }
 
-    const decoded = decodeStellarMessage(answer.frame);
+    const envelope = decodeAuthenticatedMessage(answer.frame);
+    if (envelope === undefined) {
+      return {
+        endpoint,
+        failure: 'protocol',
+        detail: 'peer sent a frame that is not an AuthenticatedMessage',
+      };
+    }
+    const decoded = decodeStellarMessage(envelope.message);
     if (decoded === undefined || decoded.type !== 'hello') {
       return {
         endpoint,
@@ -253,7 +250,9 @@ export async function performOverlayHandshake(
         detail:
           decoded === undefined
             ? 'peer sent bytes that are not a StellarMessage'
-            : `peer answered with '${decoded.type}' instead of HELLO`,
+            : decoded.type === 'error'
+              ? `peer rejected us with an overlay error: ${decoded.message}`
+              : `peer answered with ${decoded.type === 'other' ? `'${decoded.name}'` : 'an AUTH'} instead of HELLO`,
       };
     }
 
@@ -268,8 +267,12 @@ export async function performOverlayHandshake(
       };
     }
 
-    const echo = await negotiateEncryption(socket, identity, decoded, networkId, deadline);
-    return { endpoint, hello: decoded.hello, encrypted: echo };
+    const echo = await negotiateAuthentication(socket, frames, identity, ourNonce, {
+      hello: decoded.hello,
+      cert: decoded.cert,
+      nonce: decoded.nonce,
+    });
+    return { endpoint, hello: decoded.hello, authenticated: echo };
   } catch (error) {
     return {
       endpoint,
@@ -281,44 +284,43 @@ export async function performOverlayHandshake(
   }
 }
 
-/** Resolves once the TCP connection lands or the dial fails outright. */
-function connectionStep(socket: Socket): Promise<Step> {
-  return new Promise((resolve) => {
-    socket.once('connect', () => resolve({ frame: new Uint8Array(0) }));
-    socket.once('error', (error: Error) =>
-      resolve({
-        failure:
-          (error as NodeJS.ErrnoException).code === 'ECONNREFUSED' ? 'unreachable' : 'timeout',
-        detail: error.message,
-      }),
-    );
-  });
-}
-
 /**
- * Derives the session keys from the two announced Curve25519 keys and trades one
- * sealed `AUTH` frame with the peer. `undefined` means the echo never came back,
- * which the caller reports as negotiation that did not happen rather than as a
- * violation.
+ * Derives the session keys from the two announced Curve25519 keys and the two
+ * `HELLO` nonces, sends an `AUTH` under them, and authenticates the peer's own
+ * `AUTH` in reply. `undefined` means no authenticated frame ever came back, which
+ * the caller reports as negotiation that did not happen rather than as a
+ * violation; `false` means a frame came back that the derived key could not
+ * explain.
  */
-async function negotiateEncryption(
+async function negotiateAuthentication(
   socket: Socket,
+  frames: FrameReader,
   identity: EphemeralIdentity,
+  ourNonce: Uint8Array,
   peer: AnnouncedHello,
-  networkId: Uint8Array,
-  deadline: Promise<Step>,
 ): Promise<boolean | undefined> {
-  const keys = deriveSessionKeys(
-    sharedSecret(identity.curvePrivate, Buffer.from(peer.cert.pubkey().key() as Uint8Array)),
-    networkId,
-    true,
+  const theirCurve = Buffer.from(peer.cert.pubkey().key() as Uint8Array);
+  const keys = deriveMacKeys(
+    deriveSharedMacKey(
+      sharedSecret(identity.curvePrivate, theirCurve),
+      identity.curvePublic,
+      theirCurve,
+    ),
+    ourNonce,
+    peer.nonce,
+    'initiator',
   );
-  const header = authHeader();
-  socket.write(frameOverlayMessage(sealFrame(keys, encodeAuth(), header)));
+  const auth = encodeAuth(OVERLAY_AUTH_FLOW_CONTROL_FLAGS);
+  socket.write(
+    encodeOverlayFrame(encodeAuthenticatedMessage(auth, 0n, overlayMac(keys.send, 0n, auth))),
+  );
 
-  const echo = await Promise.race([nextFrame(socket, () => ({ failure: 'protocol' })), deadline]);
+  const echo = await frames.next();
   if ('failure' in echo) return undefined;
-  return openFrame(keys, echo.frame, header) !== undefined;
+  const envelope: OverlayEnvelope | undefined = decodeAuthenticatedMessage(echo.frame);
+  if (envelope === undefined) return undefined;
+  if (decodeStellarMessage(envelope.message)?.type !== 'auth') return undefined;
+  return verifyOverlayMac(keys.receive, envelope.sequence, envelope.message, envelope.mac);
 }
 
 /** The peer side of the exchange, so a test can stand in for a validator. */
@@ -335,21 +337,25 @@ export interface MockPeerOptions {
   peerId?: string;
   /** Answers the `HELLO` at all. */
   silent?: boolean;
-  /** Answers with bytes that are not a `StellarMessage`. */
+  /** Answers with a well-framed envelope carrying something else than a `StellarMessage`. */
   garbage?: boolean;
   /** Drops the connection as soon as our `HELLO` arrives. */
   hangUp?: boolean;
-  /** Sends an `AUTH` echo the client cannot authenticate. */
+  /** Answers the peer's `AUTH` under a key it did not derive. */
   tamper?: boolean;
+  /** Answers `HELLO` and then never sends an `AUTH` of its own. */
+  silentEcho?: boolean;
   timeoutMs?: number;
 }
 
 /**
- * Speaks the peer half of the handshake over an accepted socket: read the
- * client's `HELLO`, answer with our own, then trade one sealed `AUTH` echo.
+ * Speaks the peer half of the handshake over an accepted socket, as a node that
+ * was dialled does: read the caller's `HELLO`, answer with our own unauthenticated
+ * one, then wait for the caller's `AUTH` and reply with ours under the derived
+ * keys.
  *
  * Exported for the test suite. A mock validator built from the same primitives
- * proves the framing, the identity signature, and the AEAD handling round-trip,
+ * proves the framing, the identity signature, and the MAC handling round-trip,
  * which is the part of this module that can be checked without a live network.
  */
 export async function respondAsOverlayPeer(
@@ -358,125 +364,97 @@ export async function respondAsOverlayPeer(
   announcedNetworkId: Uint8Array,
   declaredPeerId: string,
 ): Promise<void> {
-  const frames = readFrames(socket, options.timeoutMs ?? 5_000);
+  const frames = readOverlayFrames(socket, options.timeoutMs ?? 5_000);
   const clientHello = await frames.next();
-  if (clientHello === undefined || options.silent) return;
+  if ('failure' in clientHello || options.silent) return;
   if (options.hangUp) {
     socket.destroy();
     return;
   }
   if (options.garbage) {
-    socket.write(frameOverlayMessage(Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05])));
+    socket.write(
+      encodeOverlayFrame(encodeAuthenticatedMessage(Buffer.from('not a stellar message', 'utf8'))),
+    );
     socket.end();
     return;
   }
 
   const identity = generateEphemeralIdentity();
+  const ourNonce = randomBytes(32);
   const peerId = options.peerId ?? declaredPeerId;
   const networkId = options.hello.networkId ?? announcedNetworkId;
   const expiration = Math.floor(Date.now() / 1000) + 600;
-  const cert = signedAuthCert(
-    { ...identity, nodePrivate: options.nodePrivate },
-    expiration,
-    networkId,
-  );
   socket.write(
-    frameOverlayMessage(
-      encodeHello({
-        ledgerVersion: options.hello.ledgerVersion,
-        overlayVersion: options.hello.overlayVersion,
-        overlayMinVersion: options.hello.overlayMinVersion,
-        networkId,
-        versionStr: options.hello.versionStr,
-        listeningPort: options.hello.listeningPort,
-        nodePublic: StrKey.decodeEd25519PublicKey(peerId),
-        cert,
-        nonce: randomBytes(32),
-      }),
-    ),
-  );
-
-  const sealed = await frames.next();
-  const clientCurve = clientCurveOf(clientHello);
-  if (sealed === undefined || clientCurve === undefined) return;
-  const keys = deriveSessionKeys(
-    sharedSecret(identity.curvePrivate, clientCurve),
-    networkId,
-    false,
-  );
-  // A peer that cannot open our frame has no reason to keep the connection up,
-  // and the client's own seal is what this proves: only an authenticated echo
-  // comes back.
-  if (openFrame(keys, sealed, authHeader()) === undefined) {
-    socket.destroy();
-    return;
-  }
-  socket.write(
-    frameOverlayMessage(
-      sealFrame(
-        options.tamper ? { ...keys, mac: Buffer.alloc(MAC_BYTES) } : keys,
-        encodeAuth(),
-        authHeader(),
+    encodeOverlayFrame(
+      encodeAuthenticatedMessage(
+        encodeHello({
+          ledgerVersion: options.hello.ledgerVersion,
+          overlayVersion: options.hello.overlayVersion,
+          overlayMinVersion: options.hello.overlayMinVersion,
+          networkId,
+          versionStr: options.hello.versionStr,
+          listeningPort: options.hello.listeningPort,
+          nodePublic: StrKey.decodeEd25519PublicKey(peerId),
+          cert: signedAuthCert(
+            { ...identity, nodePrivate: options.nodePrivate },
+            expiration,
+            networkId,
+          ),
+          nonce: ourNonce,
+        }),
       ),
     ),
   );
+
+  if (options.silentEcho) {
+    // Half-closing after the `HELLO` is what a node that keeps connections for
+    // its own reasons does: it has still answered the identity question.
+    socket.end();
+    return;
+  }
+
+  const hello = decodedHello(clientHello.frame);
+  if (hello === undefined) return;
+  const clientCurve = Buffer.from(hello.cert.pubkey().key() as Uint8Array);
+  const sealed = await frames.next();
+  if ('failure' in sealed) return;
+  const keys = deriveMacKeys(
+    deriveSharedMacKey(
+      sharedSecret(identity.curvePrivate, clientCurve),
+      // The peer that placed the call contributes its key first, whichever side we are.
+      clientCurve,
+      identity.curvePublic,
+    ),
+    hello.nonce,
+    ourNonce,
+    'responder',
+  );
+  // A node drops a caller whose `AUTH` does not authenticate under the agreed
+  // key, so the mock speaks the same rule and the echo only comes back when the
+  // two halves of this exchange really do agree.
+  const clientEnvelope = decodeAuthenticatedMessage(sealed.frame);
+  if (
+    clientEnvelope === undefined ||
+    !verifyOverlayMac(
+      keys.receive,
+      clientEnvelope.sequence,
+      clientEnvelope.message,
+      clientEnvelope.mac,
+    )
+  ) {
+    socket.destroy();
+    return;
+  }
+  const auth = encodeAuth(OVERLAY_AUTH_FLOW_CONTROL_FLAGS);
+  const mac = overlayMac(options.tamper ? Buffer.alloc(OVERLAY_MAC_BYTES) : keys.send, 0n, auth);
+  socket.write(encodeOverlayFrame(encodeAuthenticatedMessage(auth, 0n, mac)));
   socket.end();
 }
 
-/** The Curve25519 key the client announced inside its own `HELLO`. */
-function clientCurveOf(helloFrame: Uint8Array): Uint8Array | undefined {
-  const decoded = decodeStellarMessage(helloFrame);
-  if (decoded === undefined || decoded.type !== 'hello') return undefined;
-  return Buffer.from(decoded.cert.pubkey().key() as Uint8Array);
-}
-
-/** Yields each length-prefixed frame the socket delivers, or `undefined`. */
-function readFrames(
-  socket: Socket,
-  timeoutMs: number,
-): { next: () => Promise<Uint8Array | undefined> } {
-  let buffer: Uint8Array = new Uint8Array(0);
-  const waiting: ((frame: Uint8Array | undefined) => void)[] = [];
-
-  const take = (): Uint8Array | undefined => {
-    if (buffer.length < 4) return undefined;
-    const length = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength).getUint32(0);
-    if (length === 0 || length > OVERLAY_MAX_FRAME_BYTES) {
-      buffer = new Uint8Array(0);
-      return undefined;
-    }
-    if (buffer.length < length + 4) return undefined;
-    const frame = buffer.subarray(4, length + 4);
-    buffer = buffer.subarray(length + 4);
-    return frame;
-  };
-  const deliver = (frame: Uint8Array | undefined): void => {
-    const waiter = waiting.shift();
-    if (waiter !== undefined) waiter(frame);
-    else if (frame !== undefined) buffer = new Uint8Array([...buffer, ...frame]);
-  };
-
-  socket.on('data', (chunk: Uint8Array) => {
-    buffer = new Uint8Array([...buffer, ...chunk]);
-    for (;;) {
-      const frame = take();
-      if (frame === undefined) return;
-      deliver(frame);
-    }
-  });
-  socket.once('close', () => deliver(undefined));
-  socket.once('error', () => deliver(undefined));
-
-  return {
-    next: () =>
-      new Promise((resolve) => {
-        const buffered = take();
-        if (buffered !== undefined) {
-          resolve(buffered);
-          return;
-        }
-        waiting.push(resolve);
-        socket.setTimeout(timeoutMs, () => resolve(undefined));
-      }),
-  };
+/** The client's `HELLO`, read out of the frame the mock peer was given. */
+function decodedHello(frame: Buffer): AnnouncedHello | undefined {
+  const envelope = decodeAuthenticatedMessage(frame);
+  if (envelope === undefined) return undefined;
+  const decoded = decodeStellarMessage(envelope.message);
+  return decoded !== undefined && decoded.type === 'hello' ? decoded : undefined;
 }

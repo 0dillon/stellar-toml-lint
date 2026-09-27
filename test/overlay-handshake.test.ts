@@ -6,30 +6,43 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { allRules } from '../src/rules/index.js';
 import {
   authCert,
+  authCertDigest,
+  authCertPreimage,
   checkOverlayHandshake,
+  decodeAuthenticatedMessage,
   decodeStellarMessage,
+  deriveMacKeys,
+  deriveSharedMacKey,
+  encodeAuthenticatedMessage,
   encodeAuth,
   encodeHello,
+  encodeOverlayFrame,
+  ENVELOPE_TYPE_AUTH,
   failureFindings,
   generateEphemeralIdentity,
   helloFindings,
+  macSigningInput,
   networkIdForPassphrase,
+  OVERLAY_AUTH_FLOW_CONTROL_FLAGS,
+  OVERLAY_FRAME_CONTINUATION_BIT,
+  OVERLAY_MAC_BYTES,
+  OVERLAY_PROTOCOL_VERSION,
+  OVERLAY_UNAUTHENTICATED_SEQUENCE,
+  overlayFrameLength,
   overlayHandshakeRuleIds,
+  overlayMac,
   sharedSecret,
   signedAuthCert,
   validatorEndpoints,
   verifyAuthCert,
-  OVERLAY_PROTOCOL_VERSION,
+  verifyOverlayMac,
   type PeerHello,
   type ValidatorEndpoint,
 } from '../src/overlay/handshake.js';
 import type { RuleOverrides } from '../src/types.js';
 import {
-  deriveSessionKeys,
-  openFrame,
   performOverlayHandshake,
   respondAsOverlayPeer,
-  sealFrame,
   type MockPeerOptions,
 } from '../src/overlay/handshake-socket.js';
 import { frameOverlayMessage } from '../src/overlay/crawler.js';
@@ -273,7 +286,7 @@ describe('overlay handshake', () => {
     expect(diagnostics).toEqual([]);
   });
 
-  it('dials a real socket and negotiates the AEAD echo end to end', async () => {
+  it('dials a real socket and authenticates the AUTH echo end to end', async () => {
     const mock = await listen((port) => ({ hello: announcement(port), nodePrivate: NODE.secret }));
 
     try {
@@ -285,7 +298,7 @@ describe('overlay handshake', () => {
       expect(outcome.failure).toBeUndefined();
       expect(outcome.hello?.peerId).toBe(NODE.id);
       expect(outcome.hello?.versionStr).toBe('v21.4.0-release_5e21b45');
-      expect(outcome.encrypted).toBe(true);
+      expect(outcome.authenticated).toBe(true);
     } finally {
       await mock.close();
     }
@@ -366,7 +379,28 @@ describe('overlay handshake', () => {
 
       expect(outcome.hello?.peerId).toBe(NODE.id);
       expect(outcome.failure).toBeUndefined();
-      expect(outcome.encrypted).toBe(false);
+      expect(outcome.authenticated).toBe(false);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  it('treats a peer that answers HELLO and then goes quiet as no negotiation', async () => {
+    const mock = await listen((port) => ({
+      hello: announcement(port),
+      nodePrivate: NODE.secret,
+      silentEcho: true,
+    }));
+
+    try {
+      const outcome = await performOverlayHandshake(endpoint(`127.0.0.1:${mock.port}`), {
+        passphrase: MAINNET,
+        timeoutMs: 400,
+      });
+
+      expect(outcome.hello?.peerId).toBe(NODE.id);
+      expect(outcome.failure).toBeUndefined();
+      expect(outcome.authenticated).toBeUndefined();
     } finally {
       await mock.close();
     }
@@ -436,6 +470,8 @@ describe('overlay handshake messages', () => {
     expect(decoded.hello.peerId).toBe(
       StrKey.encodeEd25519PublicKey(Buffer.from(identity.nodePublic)),
     );
+    // The nonce is what the session keys are built from, so it has to survive.
+    expect(Buffer.from(decoded.nonce).toString('hex')).toBe('09'.repeat(32));
     expect(verifyAuthCert(decoded.cert, decoded.hello.peerId, networkId)).toBe(true);
   });
 
@@ -499,26 +535,106 @@ describe('overlay handshake messages', () => {
     expect(endpoints[1]).toMatchObject({ host: '2001:db8::1', port: 11626, index: 1 });
   });
 
-  it('seals a frame the peer can open and nothing else', () => {
-    const ours = generateEphemeralIdentity();
-    const theirs = generateEphemeralIdentity();
-    const secret = sharedSecret(ours.curvePrivate, theirs.curvePublic);
-    const salt = networkIdForPassphrase(MAINNET);
-    const client = deriveSessionKeys(secret, salt, true);
-    const server = deriveSessionKeys(secret, salt, false);
-    const header = Buffer.alloc(8);
+  it('wraps a message in the envelope the overlay puts on the wire', () => {
+    const message = encodeAuth();
+    const mac = Buffer.alloc(OVERLAY_MAC_BYTES, 3);
+    const envelope = encodeAuthenticatedMessage(message, 7n, mac);
+
+    expect(envelope.length).toBe(12 + message.length + OVERLAY_MAC_BYTES);
+    // `AuthenticatedMessage` is a union on a uint32 version, with only a v0 arm.
+    expect(envelope.readUInt32BE(0)).toBe(0);
+    expect(envelope.readBigUInt64BE(4)).toBe(7n);
+    expect(envelope.subarray(12, 12 + message.length).equals(message)).toBe(true);
+    // `HmacSha256Mac` is 32 raw bytes: no length prefix, no padding.
+    expect(envelope.subarray(envelope.length - OVERLAY_MAC_BYTES).equals(mac)).toBe(true);
+
+    const decoded = decodeAuthenticatedMessage(envelope);
+    expect(decoded?.sequence).toBe(7n);
+    expect(decoded?.message.equals(message)).toBe(true);
+    expect(decoded?.mac.equals(mac)).toBe(true);
+  });
+
+  it('sends a HELLO with sequence 0 and a zero MAC, because no key exists yet', () => {
+    const unauthenticated = decodeAuthenticatedMessage(
+      encodeAuthenticatedMessage(Buffer.from('a hello goes here', 'utf8')),
+    );
+
+    expect(unauthenticated?.sequence).toBe(OVERLAY_UNAUTHENTICATED_SEQUENCE);
+    expect(unauthenticated?.mac.equals(Buffer.alloc(OVERLAY_MAC_BYTES))).toBe(true);
+    expect(
+      decodeAuthenticatedMessage(Buffer.from([0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 5])),
+    ).toBeUndefined();
+  });
+
+  it('sets the continuation bit on a frame header and reads it back off', () => {
     const payload = encodeAuth();
+    const frame = encodeOverlayFrame(payload);
 
-    expect(Buffer.from(client.send).equals(server.receive)).toBe(true);
-    const opened = openFrame(server, sealFrame(client, payload, header), header);
-    expect(opened?.equals(payload)).toBe(true);
+    expect(frame.readUInt32BE(0)).toBe((OVERLAY_FRAME_CONTINUATION_BIT | payload.length) >>> 0);
+    expect(frame.subarray(4).equals(payload)).toBe(true);
+    expect(overlayFrameLength(frame.subarray(0, 4))).toBe(payload.length);
+    // A reader that took that header literally would wait for two gigabytes.
+    expect(overlayFrameLength(Buffer.from([0x80, 0x00, 0x00, 0x0c]))).toBe(12);
+    expect(overlayFrameLength(Buffer.from([0x00, 0x00, 0x00, 0x0c]))).toBe(12);
+  });
 
-    const frame = sealFrame(client, payload, header);
-    const last = frame.length - 1;
-    frame[last] = (frame[last] ?? 0) ^ 0x01;
-    expect(openFrame(server, frame, header)).toBeUndefined();
-    expect(openFrame(server, frame.subarray(0, 20), header)).toBeUndefined();
-    expect(openFrame(server, Buffer.alloc(60), Buffer.alloc(8, 1))).toBeUndefined();
+  it('signs an AuthCert over the network, envelope type, expiry, and key', () => {
+    const networkId = networkIdForPassphrase(MAINNET);
+    const key = new Uint8Array(32).fill(7);
+    const preimage = authCertPreimage(networkId, 1_800_000_000, key);
+
+    expect(preimage.length).toBe(32 + 4 + 8 + 32);
+    expect(preimage.subarray(0, 32).equals(Buffer.from(networkId))).toBe(true);
+    expect(preimage.readUInt32BE(32)).toBe(ENVELOPE_TYPE_AUTH);
+    expect(preimage.readBigUInt64BE(36)).toBe(1_800_000_000n);
+    expect(preimage.subarray(44).equals(Buffer.from(key))).toBe(true);
+    // stellar-core hashes before signing, so the digest is what the ed25519 sees.
+    expect(authCertDigest(networkId, 1_800_000_000, key).toString('hex')).toBe(
+      createHash('sha256').update(preimage).digest('hex'),
+    );
+  });
+
+  it('derives mirrored MAC keys that authenticate one direction each', () => {
+    const caller = generateEphemeralIdentity();
+    const listener = generateEphemeralIdentity();
+    const callerNonce = new Uint8Array(32).fill(1);
+    const listenerNonce = new Uint8Array(32).fill(2);
+    const theirCurve = Buffer.from(listener.curvePublic);
+
+    // Each side reaches the same key from its own secret and the other's public key.
+    const fromCaller = deriveSharedMacKey(
+      sharedSecret(caller.curvePrivate, theirCurve),
+      caller.curvePublic,
+      theirCurve,
+    );
+    const fromListener = deriveSharedMacKey(
+      sharedSecret(listener.curvePrivate, Buffer.from(caller.curvePublic)),
+      caller.curvePublic,
+      theirCurve,
+    );
+    expect(fromListener.equals(fromCaller)).toBe(true);
+
+    const sender = deriveMacKeys(fromCaller, callerNonce, listenerNonce, 'initiator');
+    const receiver = deriveMacKeys(fromCaller, callerNonce, listenerNonce, 'responder');
+    expect(sender.send.equals(receiver.receive)).toBe(true);
+    expect(sender.receive.equals(receiver.send)).toBe(true);
+
+    const auth = encodeAuth(OVERLAY_AUTH_FLOW_CONTROL_FLAGS);
+    const mac = overlayMac(sender.send, 0n, auth);
+    expect(mac.length).toBe(OVERLAY_MAC_BYTES);
+    expect(verifyOverlayMac(receiver.receive, 0n, auth, mac)).toBe(true);
+    // Direction, sequence, and payload are all covered, so a frame cannot be
+    // reflected back at the peer that sent it or reused for the next slot.
+    expect(verifyOverlayMac(sender.receive, 0n, auth, mac)).toBe(false);
+    expect(verifyOverlayMac(receiver.receive, 1n, auth, mac)).toBe(false);
+    expect(verifyOverlayMac(receiver.receive, 0n, encodeAuth(0), mac)).toBe(false);
+    expect(macSigningInput(1n, auth).readBigUInt64BE(0)).toBe(1n);
+    expect(macSigningInput(1n, auth).subarray(8).equals(auth)).toBe(true);
+  });
+
+  it('asks for the flow-control bytes a real peer insists on', () => {
+    expect(encodeAuth().readUInt32BE(4)).toBe(OVERLAY_AUTH_FLOW_CONTROL_FLAGS);
+    expect(encodeAuth(0).readUInt32BE(4)).toBe(0);
   });
 
   it('registers its rule ids so --list-rules and --off know them', () => {

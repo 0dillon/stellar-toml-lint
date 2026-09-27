@@ -1167,15 +1167,24 @@ peers emits `overlay/low-peer-count` (warning). The raw TCP transport is skipped
 
 **Overlay handshake** (with `--check-network --verify-overlay`) — a port that accepts a TCP
 connection (see _Validator peer-port reachability_) only proves something is listening. This check
-completes the exchange a stellar-core peer performs instead: an unencrypted `HELLO` frame whose
-`AuthCert` the linter signs with a fresh ephemeral key, then the node's own `HELLO` read back and its
-signature verified against the network that node names. That answers who is behind the published
+completes the exchange a stellar-core peer performs instead: every message goes out as one frame —
+a big-endian 4-byte length carrying XDR's continuation flag, then an `AuthenticatedMessage` with a
+sequence number, the `StellarMessage`, and a 32-byte `HmacSha256Mac`. `HELLO` is the one message sent
+before either side holds a key, so it travels with sequence 0 and an all-zero MAC; the linter opens
+with its own `HELLO`, whose `AuthCert` announces a fresh ephemeral Curve25519 key signed by an Ed25519
+key that is thrown away with the socket. The node's `HELLO` is read back and its cert verified against
+the network _that node_ names, which keeps the identity question separate from the network question.
+The two peers then derive session MAC keys (CAP-21: HMAC-SHA256 over the X25519 shared secret and both
+announced Curve25519 keys, expanded with both `HELLO` nonces) and trade one `AUTH` under them, asking
+for the flow-control bytes a current stellar-core requires. That answers who is behind the published
 `HOST`: a peer that never completes the
 exchange emits `overlay/handshake-timeout` (error), one naming a different network or listening on a
 port other than the advertised one emits `overlay/network-mismatch` (error), one that cannot sign for
 the `VALIDATORS[i].PUBLIC_KEY` it is published under emits `overlay/public-key-mismatch` (error), and
 one whose overlay version is behind the linter's emits `overlay/protocol-version-outdated` (warning).
-Like the peer crawler, this opens its own sockets and is skipped under `--mock-fixtures`.
+An `AUTH` echo that does not authenticate is reported as negotiation that did not happen, not as a
+finding: what a node sends after its `HELLO` is its own business. Like the peer crawler, this opens its
+own sockets and is skipped under `--mock-fixtures`.
 
 **Overlay cryptography** (used by the peer and session audits) — the auditor validates RFC 5869
 HKDF derivation, big-endian 4-byte message length framing, monotonic sequence numbers, and

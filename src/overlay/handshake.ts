@@ -9,31 +9,29 @@
  * this network. That claim is checkable, and it is the one that matters for a
  * quorum slice.
  *
- * So this module dials each declared validator, performs the overlay handshake
- * (an ephemeral Curve25519 exchange, keys derived with HKDF, messages sealed
- * with ChaCha20-Poly1305 and authenticated with the derived MAC key), reads the
- * peer's `HELLO`, and compares what it says against what the file says. A peer
- * on the wrong network is a misconfiguration; a peer whose ID is not the
- * published one is a takeover or a stale record.
+ * So this module dials each declared validator, performs the overlay handshake,
+ * reads the peer's `HELLO`, and compares what it says against what the file
+ * says. A peer on the wrong network is a misconfiguration; a peer whose ID is
+ * not the published one is a takeover or a stale record.
  *
- * The socket and the AEAD live in `./handshake-socket.ts`, imported
- * dynamically, for the same reason the peer crawler isolates `node:net`: a lint
- * run in a browser or a worker must not load them. The rule objects are
- * registered from `src/rules/index.ts` so `--list-rules` and `--off` know these
- * ids, and nothing here runs unless `--check-network --verify-overlay` both
- * appear.
+ * On the wire every overlay message is one frame: a 4-byte big-endian length
+ * whose high bit is the XDR continuation flag, followed by an
+ * `AuthenticatedMessage` — a version, a sequence number, the `StellarMessage`
+ * itself, and a 32-byte HMAC-SHA256 over the sequence and the message. `HELLO`
+ * and `ERROR` are the two messages sent before any key exists, so they carry
+ * sequence 0 and an all-zero MAC; everything after them is authenticated under
+ * keys both peers derive from the Curve25519 pair announced in their certs.
  *
- * One limitation stated plainly: the handshake implemented here is the one this
- * package speaks — AuthCert exchange, HKDF-SHA256 key derivation, AEAD framing —
- * which is enough to authenticate a peer ID and a network hash, and is what the
- * test suite exercises against a mock peer. Byte-for-byte agreement with a
- * specific stellar-core build depends on that build's overlay version, so a
- * `handshake-timeout` against a live node can mean "not stellar-core" just as
- * easily as "not reachable".
+ * The socket lives in `./handshake-socket.ts`, imported dynamically, for the
+ * same reason the peer crawler isolates `node:net`: a lint run in a browser or a
+ * worker must not load it. The rule objects are registered from
+ * `src/rules/index.ts` so `--list-rules` and `--off` know these ids, and nothing
+ * here runs unless `--check-network --verify-overlay` both appear.
  */
 import { xdr, StrKey } from '@stellar/stellar-base';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha2';
+import { hmac } from '@noble/hashes/hmac';
 import type { Diagnostic, Rule, RuleOverrides, Severity } from '../types.js';
 import { isString } from '../predicates.js';
 
@@ -47,8 +45,33 @@ export const OVERLAY_MESSAGE_ERROR = 0;
 export const OVERLAY_MESSAGE_AUTH = 2;
 export const OVERLAY_MESSAGE_HELLO = 13;
 
-/** stellar-core's overlay protocol as of the version this package targets. */
-export const OVERLAY_PROTOCOL_VERSION = 26;
+/**
+ * `AUTH_MSG_FLAG_FLOW_CONTROL_BYTES_REQUESTED`. A peer that does not ask for
+ * flow-control bytes is dropped as misconfigured, so an `AUTH` that wants the
+ * connection to survive has to set it.
+ */
+export const OVERLAY_AUTH_FLOW_CONTROL_FLAGS = 200;
+
+/** `EnvelopeType` value the `AuthCert` signature is bound to. */
+export const ENVELOPE_TYPE_AUTH = 3;
+
+/** The XDR continuation flag, set on the length header of every frame. */
+export const OVERLAY_FRAME_CONTINUATION_BIT = 0x8000_0000;
+
+/** `HmacSha256Mac`, and the sequence `HELLO` and `ERROR` always carry. */
+export const OVERLAY_MAC_BYTES = 32;
+export const OVERLAY_UNAUTHENTICATED_SEQUENCE = 0n;
+
+/**
+ * stellar-core's overlay protocol as of the version this package targets.
+ *
+ * Measured, not recalled: mainnet `core-live-{a,b,c}.stellar.org` run stellar-core
+ * 29.0.0 and announce overlay version 42 with a minimum of 41. A node answers a
+ * `HELLO` whose version does not overlap that window and then drops the
+ * connection, so this constant has to track the network for the `AUTH` step of
+ * the handshake to complete against a live peer at all.
+ */
+export const OVERLAY_PROTOCOL_VERSION = 42;
 
 /** How long a single peer may take to complete a handshake. */
 export const OVERLAY_HANDSHAKE_TIMEOUT_MS = 5_000;
@@ -79,10 +102,14 @@ export interface ValidatorEndpoint {
   port: number;
 }
 
-/** A peer's `HELLO` together with the `AuthCert` that authenticates its claim. */
+/**
+ * A peer's `HELLO`, the `AuthCert` that authenticates its claim, and the nonce
+ * that — together with ours — picks the session's MAC keys.
+ */
 export interface AnnouncedHello {
   hello: PeerHello;
   cert: xdr.AuthCert;
+  nonce: Uint8Array;
 }
 
 /** An ephemeral Curve25519/Ed25519 pair for one handshake. */
@@ -113,7 +140,6 @@ export function sharedSecret(ourPrivate: Uint8Array, theirPublic: Uint8Array): B
   return Buffer.from(x25519.getSharedSecret(Buffer.from(ourPrivate), Buffer.from(theirPublic)));
 }
 
-/** Why a handshake did not produce a trustworthy `HELLO`. */
 /**
  * Why a handshake did not produce a `HELLO` worth comparing to the file:
  * `timeout` never answered, `unreachable` refused the dial, `protocol` answered
@@ -128,11 +154,12 @@ export interface HandshakeOutcome {
   failure?: HandshakeFailure | undefined;
   detail?: string | undefined;
   /**
-   * Whether an `AUTH` frame round-tripped under keys derived from both peers'
-   * announced Curve25519 keys. Absent means the peer never echoed, which is
-   * reported as negotiation that did not happen rather than as a violation.
+   * Whether an `AUTH` frame authenticated under keys derived from both peers'
+   * announced Curve25519 keys came back. Absent means the peer never sent one,
+   * which is reported as negotiation that did not happen rather than as a
+   * violation: what a node sends after its `HELLO` is its own business.
    */
-  encrypted?: boolean | undefined;
+  authenticated?: boolean | undefined;
 }
 
 /** Dials one endpoint and reports what its handshake said. */
@@ -221,8 +248,8 @@ export function encodeHello(input: {
   );
 }
 
-/** An `AUTH` frame announcing that a handshake is beginning. */
-export function encodeAuth(flags = 0): Buffer {
+/** An `AUTH` frame asking for the flow-control bytes a real peer insists on. */
+export function encodeAuth(flags = OVERLAY_AUTH_FLOW_CONTROL_FLAGS): Buffer {
   return Buffer.from(xdr.StellarMessage.auth(new xdr.Auth({ flags })).toXDR());
 }
 
@@ -249,19 +276,35 @@ export function encodeAuthCert(
 }
 
 /**
- * The bytes a node signs to bind an `AuthCert` to itself: the key it is
- * announcing, when it stops being valid, and the network it is announcing them
- * on. Including the hash means a cert minted for testnet cannot be replayed
- * against a mainnet peer.
+ * The bytes a node certifies to bind an `AuthCert` to itself: the network it is
+ * announcing them on, the envelope type that keeps this signature from being
+ * reusable as some other one, when the cert stops being valid, and the key it is
+ * announcing. Including the network hash means a cert minted for testnet cannot
+ * be replayed against a mainnet peer.
  */
-export function authCertSigningInput(
-  curve25519PublicKey: Uint8Array,
-  expiration: number,
+export function authCertPreimage(
   networkId: Uint8Array,
+  expiration: number,
+  curve25519PublicKey: Uint8Array,
 ): Buffer {
+  const envelope = Buffer.alloc(4);
+  envelope.writeUInt32BE(ENVELOPE_TYPE_AUTH);
   const until = Buffer.alloc(8);
-  until.writeBigUInt64BE(BigInt(expiration));
-  return Buffer.concat([Buffer.from(curve25519PublicKey), until, Buffer.from(networkId)]);
+  until.writeBigUInt64BE(BigInt(Math.trunc(expiration)));
+  return Buffer.concat([Buffer.from(networkId), envelope, until, Buffer.from(curve25519PublicKey)]);
+}
+
+/**
+ * What the node actually signs: the SHA-256 of that preimage. stellar-core
+ * hashes before signing, so verifying against the raw preimage fails against
+ * every real peer.
+ */
+export function authCertDigest(
+  networkId: Uint8Array,
+  expiration: number,
+  curve25519PublicKey: Uint8Array,
+): Buffer {
+  return Buffer.from(sha256(authCertPreimage(networkId, expiration, curve25519PublicKey)));
 }
 
 /** A signed `AuthCert`: an ephemeral key bound to a node ID and a network. */
@@ -273,10 +316,7 @@ export function signedAuthCert(
   return authCert(
     identity.curvePublic,
     expiration,
-    ed25519.sign(
-      authCertSigningInput(identity.curvePublic, expiration, networkId),
-      identity.nodePrivate,
-    ),
+    ed25519.sign(authCertDigest(networkId, expiration, identity.curvePublic), identity.nodePrivate),
   );
 }
 
@@ -297,16 +337,161 @@ export function verifyAuthCert(cert: xdr.AuthCert, peerId: string, networkId: Ui
   try {
     return ed25519.verify(
       signature,
-      authCertSigningInput(
-        Buffer.from(cert.pubkey().key() as Uint8Array),
-        Number(cert.expiration().toString()),
+      authCertDigest(
         networkId,
+        Number(cert.expiration().toString()),
+        Buffer.from(cert.pubkey().key() as Uint8Array),
       ),
       Buffer.from(nodePublic),
     );
   } catch {
     return false;
   }
+}
+
+/** One `AuthenticatedMessage`: the envelope every overlay frame carries. */
+export interface OverlayEnvelope {
+  sequence: bigint;
+  /** The inner `StellarMessage`, as XDR bytes. */
+  message: Buffer;
+  mac: Buffer;
+}
+
+/**
+ * Wraps a `StellarMessage` in the envelope the overlay puts on the wire.
+ * `HELLO` and `ERROR` go out before either peer holds a key, which is why the
+ * defaults are the sequence and all-zero MAC stellar-core itself uses for them.
+ */
+export function encodeAuthenticatedMessage(
+  message: Uint8Array,
+  sequence: bigint = OVERLAY_UNAUTHENTICATED_SEQUENCE,
+  mac: Uint8Array = new Uint8Array(OVERLAY_MAC_BYTES),
+): Buffer {
+  const header = Buffer.alloc(12);
+  header.writeUInt32BE(0, 0);
+  header.writeBigUInt64BE(sequence, 4);
+  const trailing = Buffer.alloc(OVERLAY_MAC_BYTES);
+  Buffer.from(mac).subarray(0, OVERLAY_MAC_BYTES).copy(trailing);
+  return Buffer.concat([header, Buffer.from(message), trailing]);
+}
+
+/** The envelope's `StellarMessage` and MAC, or `undefined` for malformed bytes. */
+export function decodeAuthenticatedMessage(bytes: Uint8Array): OverlayEnvelope | undefined {
+  const frame = Buffer.from(bytes);
+  if (frame.length < 12 + 4 + OVERLAY_MAC_BYTES) return undefined;
+  if (frame.readUInt32BE(0) !== 0) return undefined;
+  const end = frame.length - OVERLAY_MAC_BYTES;
+  if (end < 16) return undefined;
+  return {
+    sequence: frame.readBigUInt64BE(4),
+    message: frame.subarray(12, end),
+    mac: frame.subarray(end),
+  };
+}
+
+/** A frame: the length header with its continuation flag set, then the payload. */
+export function encodeOverlayFrame(payload: Uint8Array): Buffer {
+  const header = Buffer.alloc(4);
+  // Bitwise arithmetic in JavaScript is signed, so the flag has to come back
+  // out unsigned or the header write rejects its own value.
+  header.writeUInt32BE((OVERLAY_FRAME_CONTINUATION_BIT | payload.length) >>> 0, 0);
+  return Buffer.concat([header, Buffer.from(payload)]);
+}
+
+/**
+ * The payload length a frame header declares. stellar-core masks the
+ * continuation bit off rather than rejecting it, so a reader that takes the
+ * header literally sees a multi-megabyte frame from a healthy node.
+ */
+export function overlayFrameLength(header: Uint8Array): number {
+  const bytes = Buffer.from(header);
+  return (bytes.readUInt32BE(0) & ~OVERLAY_FRAME_CONTINUATION_BIT) >>> 0;
+}
+
+/** The bytes the MAC covers: the sequence, then the message, both as XDR. */
+export function macSigningInput(sequence: bigint, message: Uint8Array): Buffer {
+  const header = Buffer.alloc(8);
+  header.writeBigUInt64BE(sequence, 0);
+  return Buffer.concat([header, Buffer.from(message)]);
+}
+
+/** `HmacSha256Mac` over the sequence and the message, under `key`. */
+export function overlayMac(key: Uint8Array, sequence: bigint, message: Uint8Array): Buffer {
+  return Buffer.from(hmac(sha256, Buffer.from(key), macSigningInput(sequence, message)));
+}
+
+/** True when `mac` is the MAC this key produces for this frame. */
+export function verifyOverlayMac(
+  key: Uint8Array,
+  sequence: bigint,
+  message: Uint8Array,
+  mac: Uint8Array,
+): boolean {
+  const expected = overlayMac(key, sequence, message);
+  const actual = Buffer.from(mac);
+  return expected.length === actual.length && expected.equals(actual);
+}
+
+/** Which half of a pair of MAC keys one peer holds depends on who dialled. */
+export type OverlayPeerRole = 'initiator' | 'responder';
+
+/**
+ * The medium-duration key for one peer pair: HKDF-Extract over the X25519 shared
+ * secret and both announced Curve25519 keys, ordered so that the peer that
+ * placed the call contributes its key first. Both sides reach the same key from
+ * their own halves of that exchange, which is what makes it evidence.
+ */
+export function deriveSharedMacKey(
+  dhSecret: Uint8Array,
+  initiatorCurvePublic: Uint8Array,
+  responderCurvePublic: Uint8Array,
+): Buffer {
+  return Buffer.from(
+    hmac(
+      sha256,
+      new Uint8Array(OVERLAY_MAC_BYTES),
+      Buffer.concat([
+        Buffer.from(dhSecret),
+        Buffer.from(initiatorCurvePublic),
+        Buffer.from(responderCurvePublic),
+      ]),
+    ),
+  );
+}
+
+/**
+ * The two session keys, each HKDF-Expand of the shared key over a role byte and
+ * the two `HELLO` nonces in the order the calling side's nonce comes first. The
+ * mirror is exact: one peer's send key is the other's receive key.
+ */
+export function deriveMacKeys(
+  sharedMacKey: Uint8Array,
+  initiatorNonce: Uint8Array,
+  responderNonce: Uint8Array,
+  role: OverlayPeerRole,
+): { send: Buffer; receive: Buffer } {
+  const expand = (label: number, first: Uint8Array, second: Uint8Array): Buffer =>
+    Buffer.from(
+      hmac(
+        sha256,
+        Buffer.from(sharedMacKey),
+        Buffer.concat([
+          Buffer.from([label]),
+          Buffer.from(first),
+          Buffer.from(second),
+          Buffer.from([1]),
+        ]),
+      ),
+    );
+  const called = role === 'initiator';
+  return {
+    send: called
+      ? expand(0, initiatorNonce, responderNonce)
+      : expand(1, responderNonce, initiatorNonce),
+    receive: called
+      ? expand(1, responderNonce, initiatorNonce)
+      : expand(0, initiatorNonce, responderNonce),
+  };
 }
 
 /**
@@ -318,7 +503,7 @@ export function verifyAuthCert(cert: xdr.AuthCert, peerId: string, networkId: Ui
 export function decodeStellarMessage(
   bytes: Uint8Array,
 ):
-  | { type: 'hello'; hello: PeerHello; cert: xdr.AuthCert }
+  | { type: 'hello'; hello: PeerHello; cert: xdr.AuthCert; nonce: Uint8Array }
   | { type: 'auth' }
   | { type: 'error'; message: string }
   | { type: 'other'; name: string }
@@ -328,7 +513,12 @@ export function decodeStellarMessage(
     const name = message.switch().name as string;
     if (name === 'hello') {
       const hello = message.hello() as xdr.Hello;
-      return { type: 'hello', hello: helloOf(hello), cert: hello.cert() };
+      return {
+        type: 'hello',
+        hello: helloOf(hello),
+        cert: hello.cert(),
+        nonce: Buffer.from(hello.nonce() as Uint8Array),
+      };
     }
     if (name === 'auth') return { type: 'auth' };
     if (name === 'errorMsg') {
