@@ -7,6 +7,7 @@ import { lint } from '../src/lint.js';
 import {
   formatCheckstyle,
   formatGithub,
+  formatCount,
   formatJson,
   formatSarif,
   formatSummary,
@@ -185,6 +186,98 @@ describe('formatSummary', () => {
     const output = formatSummary(lint(CLEAN), 'weird\nname.toml');
     expect(output).toMatch(ONE_LINE);
     expect(output).toBe('weird name.toml: PASS (0 errors, 0 warnings)\n');
+  });
+});
+
+describe('formatCount', () => {
+  const ONE_LINE = /^[^\n]+\n$/;
+
+  it('reports a clean file as 0 problems (0 errors, 0 warnings)', () => {
+    const output = formatCount(lint(CLEAN));
+    expect(output).toBe('0 problems (0 errors, 0 warnings)\n');
+    expect(output).toMatch(ONE_LINE);
+  });
+
+  it('formats single error correctly with singular problem and error', () => {
+    const result: LintResult = {
+      ok: false,
+      diagnostics: [],
+      counts: { error: 1, warning: 0, info: 0 },
+    };
+    expect(formatCount(result)).toBe('1 problem (1 error, 0 warnings)\n');
+  });
+
+  it('formats single warning correctly with singular problem and warning', () => {
+    const result: LintResult = {
+      ok: true,
+      diagnostics: [],
+      counts: { error: 0, warning: 1, info: 0 },
+    };
+    expect(formatCount(result)).toBe('1 problem (0 errors, 1 warning)\n');
+  });
+
+  it('formats multiple problems and excludes info diagnostics from problem counts', () => {
+    const result: LintResult = {
+      ok: false,
+      diagnostics: [],
+      counts: { error: 1, warning: 2, info: 5 },
+    };
+    expect(formatCount(result)).toBe('3 problems (1 error, 2 warnings)\n');
+  });
+
+  it('aggregates problem counts across multiple results', () => {
+    const r1: LintResult = {
+      ok: false,
+      diagnostics: [],
+      counts: { error: 1, warning: 1, info: 0 },
+    };
+    const r2: LintResult = {
+      ok: false,
+      diagnostics: [],
+      counts: { error: 2, warning: 3, info: 1 },
+    };
+    expect(formatCount([{ result: r1 }, { result: r2 }])).toBe(
+      '7 problems (3 errors, 4 warnings)\n',
+    );
+  });
+
+  it('paints errors red bold, warnings yellow, and zero errors/warnings green when color is on', () => {
+    const c = makeColors(true);
+    const withErrors: LintResult = {
+      ok: false,
+      diagnostics: [],
+      counts: { error: 1, warning: 2, info: 0 },
+    };
+    const withWarningsOnly: LintResult = {
+      ok: true,
+      diagnostics: [],
+      counts: { error: 0, warning: 2, info: 0 },
+    };
+    const clean: LintResult = {
+      ok: true,
+      diagnostics: [],
+      counts: { error: 0, warning: 0, info: 0 },
+    };
+
+    expect(formatCount(withErrors, { color: true })).toBe(
+      `${c.red(c.bold('3 problems (1 error, 2 warnings)'))}\n`,
+    );
+    expect(formatCount(withWarningsOnly, { color: true })).toBe(
+      `${c.yellow('2 problems (0 errors, 2 warnings)')}\n`,
+    );
+    expect(formatCount(clean, { color: true })).toBe(
+      `${c.green('0 problems (0 errors, 0 warnings)')}\n`,
+    );
+  });
+
+  it('stays plain when color is off', () => {
+    const result: LintResult = {
+      ok: false,
+      diagnostics: [],
+      counts: { error: 1, warning: 1, info: 0 },
+    };
+    const ansi = / \[/;
+    expect(ansi.test(formatCount(result, { color: false }))).toBe(false);
   });
 });
 

@@ -16,6 +16,7 @@ export { PRESETS, PRESET_NAMES, resolvePreset } from './presets.js';
 export type { Preset, PresetName } from './presets.js';
 export {
   formatText,
+  formatCount,
   formatJson,
   formatSarif,
   formatGithub,

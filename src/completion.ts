@@ -82,6 +82,7 @@ const FLAGS: readonly FlagSpec[] = [
   { long: '--interactive', short: '-i', description: 'Full-screen dashboard of the findings' },
   { long: '--lsp', description: 'Run as a Language Server on stdio' },
   { long: '--quiet', short: '-q', description: 'Report errors only' },
+  { long: '--count', description: 'Print only problem count totals' },
   { long: '--show-help-urls', description: 'Print the spec link for each finding' },
   { long: '--no-suggestions', description: 'Hide diagnostic suggestions' },
   { long: '--check-network', description: 'Verify accounts and endpoints online' },

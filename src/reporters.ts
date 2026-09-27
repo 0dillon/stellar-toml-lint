@@ -116,8 +116,30 @@ function summaryLine(result: LintResult, c: ReturnType<typeof makeColors>): stri
   return error > 0 ? c.red(c.bold(text)) : warning > 0 ? c.yellow(text) : c.grey(text);
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return n === 1 ? word : `${word}s`;
+}
+
+/**
+ * Emits only the problem count line: `3 problems (1 error, 2 warnings)`.
+ *
+ * Designed for bash scripts and CI status checks that need a minimal output
+ * format without diagnostic text. Summarizes errors and warnings across the
+ * linted results.
+ */
+export function formatCount(
+  target: { result: LintResult }[] | LintResult,
+  options: { color?: boolean } = {},
+): string {
+  const c = makeColors(options.color ?? false);
+  const results = Array.isArray(target) ? target : [{ result: target }];
+  const totalErrors = results.reduce((acc, { result }) => acc + result.counts.error, 0);
+  const totalWarnings = results.reduce((acc, { result }) => acc + result.counts.warning, 0);
+  const totalProblems = totalErrors + totalWarnings;
+  const line = `${totalProblems} ${plural(totalProblems, 'problem')} (${totalErrors} ${plural(totalErrors, 'error')}, ${totalWarnings} ${plural(totalWarnings, 'warning')})`;
+  const painted =
+    totalErrors > 0 ? c.red(c.bold(line)) : totalWarnings > 0 ? c.yellow(line) : c.green(line);
+  return `${painted}\n`;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -15,10 +15,26 @@ async function cli(
   args: string[],
   input?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  if (input !== undefined) {
+    return new Promise((resolve) => {
+      const child = spawn('node', [CLI, ...args], {
+        env: { ...process.env, NO_COLOR: '1' },
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      child.on('close', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+      child.stdin.end(input);
+    });
+  }
   try {
     const { stdout, stderr } = await run('node', [CLI, ...args], {
       env: { ...process.env, NO_COLOR: '1' },
-      ...(input !== undefined ? {} : {}),
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -443,5 +459,94 @@ describe('cli -f summary', () => {
     expect(stderr).toContain('Unknown format');
     // The message has to name the new choice, or the fix is a guess.
     expect(stderr).toContain('summary');
+  });
+});
+
+describe('cli --count', () => {
+  it('emits only the problem count line for a broken file and exits 1', async () => {
+    const { code, stdout, stderr } = await cli([fixture('broken.toml'), '--count']);
+
+    // Return code remains unchanged: 1 on errors
+    expect(code).toBe(1);
+    expect(stderr).toBe('');
+
+    // Must emit only the single problem count line without diagnostic text
+    const lines = stdout.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe('43 problems (27 errors, 16 warnings)');
+
+    // Suppresses diagnostic lists, file headers, suggestions, and rule ids
+    expect(stdout).not.toContain('broken.toml');
+    expect(stdout).not.toContain('↳');
+    expect(stdout).not.toContain('currencies/issuance-exclusive');
+    expect(stdout).not.toContain('general/version');
+  });
+
+  it('emits 0 problems for a valid file and exits 0', async () => {
+    const { code, stdout, stderr } = await cli([fixture('valid.toml'), '--count']);
+
+    expect(code).toBe(0);
+    expect(stderr).toBe('');
+
+    const lines = stdout.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe('0 problems (0 errors, 0 warnings)');
+    expect(stdout).not.toContain('No SEP-1 issues found');
+    expect(stdout).not.toContain('valid.toml');
+  });
+
+  it('aggregates problem count totals across multiple files without per-file output', async () => {
+    const { code, stdout } = await cli([fixture('valid.toml'), fixture('broken.toml'), '--count']);
+
+    expect(code).toBe(1);
+    const lines = stdout.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe('43 problems (27 errors, 16 warnings)');
+    expect(stdout).not.toContain('valid.toml');
+    expect(stdout).not.toContain('broken.toml');
+    expect(stdout).not.toContain('Checked');
+  });
+
+  it('emits only the problem count when reading stdin', async () => {
+    const { code, stdout } = await cli(['-', '--count'], 'VERSION="two"\n');
+
+    // VERSION="two" is a warning, so default exit code is 0 (no errors)
+    expect(code).toBe(0);
+    const lines = stdout.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe('3 problems (0 errors, 3 warnings)');
+    expect(stdout).not.toContain('stdin');
+  });
+
+  it('preserves --strict exit code while emitting problem count', async () => {
+    const lenient = await cli([fixture('warnings-only.toml'), '--count']);
+    expect(lenient.code).toBe(0);
+    expect(lenient.stdout.trimEnd()).toMatch(/^\d+ problems? \(0 errors, \d+ warnings?\)$/);
+
+    const strict = await cli([fixture('warnings-only.toml'), '--count', '--strict']);
+    expect(strict.code).toBe(1);
+    expect(strict.stdout.trimEnd()).toMatch(/^\d+ problems? \(0 errors, \d+ warnings?\)$/);
+  });
+
+  it('documents --count in --help', async () => {
+    const { code, stdout } = await cli(['--help']);
+    expect(code).toBe(0);
+    expect(stdout).toContain('--count');
+    expect(stdout).toContain('Print only problem count totals');
+  });
+
+  it('advertises --count in --completion scripts', async () => {
+    const { code, stdout } = await cli(['--completion', 'bash']);
+    expect(code).toBe(0);
+    expect(stdout).toContain('--count');
+  });
+
+  it('paints count line when --color is requested and strips cleanly with NO_COLOR', async () => {
+    const plain = await cli([fixture('broken.toml'), '--count']);
+    const painted = await cli([fixture('broken.toml'), '--count', '--color']);
+
+    // Stripping escape sequences yields the plain line
+    expect(painted.stdout.replace(/\p{Cc}\[[0-9;]*m/gu, '')).toBe(plain.stdout);
+    expect(painted.stdout).not.toBe(plain.stdout);
   });
 });

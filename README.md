@@ -123,6 +123,7 @@ it was before.
 | `--error <rule>`     | Raise a rule to error (repeatable)                                              |
 | `--warn <rule>`      | Lower a rule to warning (repeatable)                                            |
 | `-q, --quiet`        | Show errors only                                                                |
+| `--count`            | Print only problem count totals                                                 |
 | `--show-help-urls`   | Print the spec link for each finding                                            |
 | `--list-rules`       | Print every rule and exit                                                       |
 | `--no-suggestions`   | Hide diagnostic suggestions in the output                                       |
@@ -141,6 +142,7 @@ it was before.
 | `--error <rule>`          | Raise a rule to error (repeatable)                                              |
 | `--warn <rule>`           | Lower a rule to warning (repeatable)                                            |
 | `-q, --quiet`             | Show errors only                                                                |
+| `--count`                 | Print only problem count totals                                                 |
 | `--show-help-urls`        | Print the spec link for each finding                                            |
 | `--list-rules`            | Print every rule and exit                                                       |
 | `--no-suggestions`        | Hide diagnostic suggestions in the output                                       |
@@ -172,6 +174,7 @@ Exit codes: **0** no errors, **1** problems found, **2** bad usage or I/O failur
 | `--error <rule>`            | Raise a rule to error (repeatable)                                                                                      |
 | `--warn <rule>`             | Lower a rule to warning (repeatable)                                                                                    |
 | `-q, --quiet`               | Show errors only                                                                                                        |
+| `--count`                   | Print only problem count totals                                                                                         |
 | `--show-help-urls`          | Print the spec link for each finding                                                                                    |
 | `--list-rules`              | Print every rule and exit                                                                                               |
 | `--completion <shell>`      | Print a `bash`, `zsh`, or `fish` completion script and exit                                                             |
@@ -209,6 +212,7 @@ Exit codes: **0** no errors, **1** problems found, **2** bad usage or I/O failur
 | `--error <rule>`            | Raise a rule to error (repeatable)                                                                                      |
 | `--warn <rule>`             | Lower a rule to warning (repeatable)                                                                                    |
 | `-q, --quiet`               | Show errors only                                                                                                        |
+| `--count`                   | Print only problem count totals                                                                                         |
 | `--show-help-urls`          | Print the spec link for each finding                                                                                    |
 | `--list-rules`              | Print every rule and exit                                                                                               |
 | `--completion <shell>`      | Print a `bash`, `zsh`, or `fish` completion script and exit                                                             |
@@ -259,6 +263,7 @@ failure.
 | `--warn <rule>`             | Lower a rule to warning (repeatable)                                                                                                                                       |
 | `--preset <name>`           | Start from a role's rule bundle: `validator`, `anchor-sep24`, or `issuer`                                                                                                  |
 | `-q, --quiet`               | Show errors only                                                                                                                                                           |
+| `--count`                   | Print only problem count totals                                                                                                                                            |
 | `--show-help-urls`          | Print the spec link for each finding                                                                                                                                       |
 | `--list-rules`              | Print every rule and exit                                                                                                                                                  |
 | `--completion <shell>`      | Print a `bash`, `zsh`, or `fish` completion script and exit                                                                                                                |
@@ -814,6 +819,23 @@ exactly as it does in the text report and in the run's exit code. Selecting a fo
 which code the CLI returns: `0` for a pass, `1` for errors or strict warnings, `2` for bad usage.
 Unlike the `text` reporter, no closing `Checked N files` line is appended — a run of ten files is
 ten lines, and nothing else.
+
+### Problem count totals with `--count`
+
+Bash scripts, git pre-commit hooks, and CI status checks often need a minimal output format that prints only the total problem count without diagnostic text. The `--count` flag suppresses diagnostic lists and emits only the problem count line:
+
+```console
+$ stellar-toml-lint --count stellar.toml
+3 problems (1 error, 2 warnings)
+```
+
+The output summarizes errors and warnings across all linted files. Return codes remain unchanged (`0` on success, `1` on error).
+
+```bash
+# Capture the count for a custom status message or PR comment
+PROBLEMS=$(stellar-toml-lint --count public/.well-known/stellar.toml)
+echo "Linter status: $PROBLEMS"
+```
 
 ### GitHub step summaries
 

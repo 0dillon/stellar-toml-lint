@@ -18,6 +18,7 @@ import { checkCertExpiry } from './network/cert-expiry.js';
 import { checkPeerPortReachability } from './validators/net-probe.js';
 import {
   formatCheckstyle,
+  formatCount,
   formatGithub,
   formatHtml,
   formatJson,
@@ -120,6 +121,7 @@ interface Cli {
   watch?: boolean;
   color?: boolean;
   quiet: boolean;
+  count: boolean;
   showHelp: boolean;
   rules: RuleOverrides;
   preset?: PresetName;
@@ -199,6 +201,7 @@ OPTIONS
       --lsp               Run as a Language Server on stdio (diagnostics,
                           quick-fix code actions, and SEP-1 hover docs)
   -q, --quiet             Report errors only
+      --count             Print only problem count totals
       --show-help-urls    Print the spec link for each finding
       --no-suggestions    Hide diagnostic suggestions in the output
       --check-network     Verify SIGNING_KEY, ACCOUNTS, HORIZON_URL,
@@ -792,7 +795,7 @@ async function main(argv: string[]): Promise<number> {
 
     // A dashboard written into a pipe or a file would corrupt the output it is
     // meant to replace, so anything that is not a terminal keeps the text report.
-    const dashboard = cli.interactive === true && supportsDashboard(process.stdout);
+    const dashboard = cli.interactive === true && !cli.count && supportsDashboard(process.stdout);
 
     if (!cli.exportApConfig && dashboard) {
       await runDashboard(
@@ -801,28 +804,32 @@ async function main(argv: string[]): Promise<number> {
         { color, ...(cli.quiet ? { filter: 'error' as const } : {}) },
       );
     } else if (!cli.exportApConfig) {
-      for (const { name, result } of results) {
-        const filtered = cli.quiet
-          ? { ...result, diagnostics: result.diagnostics.filter((d) => d.severity === 'error') }
-          : result;
+      if (cli.count) {
+        process.stdout.write(formatCount(results, { color }));
+      } else {
+        for (const { name, result } of results) {
+          const filtered = cli.quiet
+            ? { ...result, diagnostics: result.diagnostics.filter((d) => d.severity === 'error') }
+            : result;
 
-        process.stdout.write(render(filtered, name, cli, color));
-      }
+          process.stdout.write(render(filtered, name, cli, color));
+        }
 
-      // One line closing a multi-file run, so a CI log answers "did the whole
-      // set pass?" without anyone counting per-file blocks. Only the text
-      // reporter gets it: appending prose to JSON, SARIF, or XML would break the
-      // parsers those formats exist for. `summary` needs no such line — it is
-      // already one line per file.
-      if (results.length > 1 && cli.format === 'text') {
-        process.stdout.write(formatRunSummary(results, { color }));
-      }
+        // One line closing a multi-file run, so a CI log answers "did the whole
+        // set pass?" without anyone counting per-file blocks. Only the text
+        // reporter gets it: appending prose to JSON, SARIF, or XML would break the
+        // parsers those formats exist for. `summary` needs no such line — it is
+        // already one line per file.
+        if (results.length > 1 && cli.format === 'text') {
+          process.stdout.write(formatRunSummary(results, { color }));
+        }
 
-      // The contracts' own error catalogues, printed beside the findings that
-      // mention them. Only the text reporter: a matrix is for a human reading
-      // CI output, and appending prose to JSON or SARIF breaks those formats.
-      if (cli.format === 'text' && cli.showHelp && catalogues.length > 0) {
-        process.stdout.write(formatContractErrorCatalogues(catalogues, { helpUrls: true }));
+        // The contracts' own error catalogues, printed beside the findings that
+        // mention them. Only the text reporter: a matrix is for a human reading
+        // CI output, and appending prose to JSON or SARIF breaks those formats.
+        if (cli.format === 'text' && cli.showHelp && catalogues.length > 0) {
+          process.stdout.write(formatContractErrorCatalogues(catalogues, { helpUrls: true }));
+        }
       }
     }
 
@@ -982,6 +989,7 @@ function parseArgs(argv: string[]): Cli | 'handled' {
     format: 'text',
     strict: false,
     quiet: false,
+    count: false,
     showHelp: false,
     rules: {},
     checkNetwork: false,
@@ -1239,6 +1247,10 @@ function parseArgs(argv: string[]): Cli | 'handled' {
       case '-q':
       case '--quiet':
         cli.quiet = true;
+        break;
+
+      case '--count':
+        cli.count = true;
         break;
 
       case '--show-help-urls':
