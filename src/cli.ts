@@ -57,6 +57,7 @@ import {
   type ContractErrorCatalogue,
 } from './soroban/errors.js';
 import { checkSep6 } from './cross-sep/sep6.js';
+import { checkHistoryArchive } from './rules/history-url-check.js';
 import { checkSep10Replay } from './protocols/sep10-replay.js';
 import { checkTokenBinding } from './security/token-binding.js';
 import { verifySep6Integration } from './protocols/sep6.js';
@@ -519,6 +520,7 @@ async function main(argv: string[]): Promise<number> {
             // explicit opt-in for a local file.
             if (cli.checkNetwork || cli.domain !== undefined) {
               networkDiagnostics.push(
+                ...(await checkHistoryArchive(fileResult.parsed, fetchImpl, { rules })),
                 ...(await checkSep6(fileResult.parsed, fetchImpl, { rules })),
               );
             }
