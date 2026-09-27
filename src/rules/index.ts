@@ -46,10 +46,12 @@ import { adminAuditorRules } from '../soroban/admin-auditor.js';
 import { simulationRules } from '../soroban/simulation.js';
 import { storageFootprintRules } from '../soroban/storage-footprint.js';
 import { authAuditorRules } from '../soroban/auth-auditor.js';
+import { insecureHttpRule } from './insecure-http.js';
 
 /** Every rule, in report order. */
 export const allRules: Rule[] = [
   ...generalRules,
+  insecureHttpRule,
   ...deprecationRules,
   ...documentationRules,
   ...principalRules,
@@ -152,4 +154,5 @@ export {
   simulationRules,
   storageFootprintRules,
   authAuditorRules,
+  insecureHttpRule,
 };
