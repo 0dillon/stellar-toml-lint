@@ -1780,3 +1780,15 @@ Two additional auditors run automatically as part of `--check-network`:
   fetches the anchor account from Horizon under `--check-network` and flags a
   declared `SIGNING_KEY` that has been removed or given weight 0, as well as a key
   that has been superseded by another on-chain signer.
+
+## New Auditors
+
+### Clawback Audit (`src/rules/clawback-audit.ts`)
+Queries Horizon for account flags and compares with stellar.toml asset metadata to report:
+- `currencies/undisclosed-clawback-enabled` - clawback is enabled on chain but not disclosed in stellar.toml
+- `currencies/mismatched-auth-revocable-flag` - auth_revocable flag differs between Horizon and stellar.toml
+
+### SEP-8 Resilience Audit (`src/protocols/sep8-resilience.ts`)
+Measures response latency of a SEP-8 approval server over 5 sample requests and reports:
+- `sep8/approval-server-unresponsive` - more than 2 of 5 requests fail
+- `sep8/approval-server-high-latency` - average latency exceeds 3000ms SLA
