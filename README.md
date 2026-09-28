@@ -124,6 +124,7 @@ it was before.
 | `--warn <rule>`      | Lower a rule to warning (repeatable)                                            |
 | `-q, --quiet`        | Show errors only                                                                |
 | `--count`            | Print only problem count totals                                                 |
+| `--silent-success`   | Print nothing on stdout when a run has no diagnostics                           |
 | `--show-help-urls`   | Print the spec link for each finding                                            |
 | `--list-rules`       | Print every rule and exit                                                       |
 | `--no-suggestions`   | Hide diagnostic suggestions in the output                                       |
@@ -143,6 +144,7 @@ it was before.
 | `--warn <rule>`           | Lower a rule to warning (repeatable)                                            |
 | `-q, --quiet`             | Show errors only                                                                |
 | `--count`                 | Print only problem count totals                                                 |
+| `--silent-success`        | Print nothing on stdout when a run has no diagnostics                           |
 | `--show-help-urls`        | Print the spec link for each finding                                            |
 | `--list-rules`            | Print every rule and exit                                                       |
 | `--no-suggestions`        | Hide diagnostic suggestions in the output                                       |
@@ -176,6 +178,7 @@ Exit codes: **0** no errors, **1** problems found, **2** bad usage or I/O failur
 | `--warn <rule>`             | Lower a rule to warning (repeatable)                                                                                    |
 | `-q, --quiet`               | Show errors only                                                                                                        |
 | `--count`                   | Print only problem count totals                                                                                         |
+| `--silent-success`          | Print nothing on stdout when a run has no diagnostics                                                                   |
 | `--show-help-urls`          | Print the spec link for each finding                                                                                    |
 | `--list-rules`              | Print every rule and exit                                                                                               |
 | `--completion <shell>`      | Print a `bash`, `zsh`, or `fish` completion script and exit                                                             |
@@ -214,6 +217,7 @@ Exit codes: **0** no errors, **1** problems found, **2** bad usage or I/O failur
 | `--warn <rule>`             | Lower a rule to warning (repeatable)                                                                                    |
 | `-q, --quiet`               | Show errors only                                                                                                        |
 | `--count`                   | Print only problem count totals                                                                                         |
+| `--silent-success`          | Print nothing on stdout when a run has no diagnostics                                                                   |
 | `--show-help-urls`          | Print the spec link for each finding                                                                                    |
 | `--list-rules`              | Print every rule and exit                                                                                               |
 | `--completion <shell>`      | Print a `bash`, `zsh`, or `fish` completion script and exit                                                             |
@@ -266,6 +270,7 @@ failure.
 | `--preset <name>`           | Start from a role's rule bundle: `validator`, `anchor-sep24`, or `issuer`                                                                                                  |
 | `-q, --quiet`               | Show errors only                                                                                                                                                           |
 | `--count`                   | Print only problem count totals                                                                                                                                            |
+| `--silent-success`          | Print nothing on stdout when a run has no diagnostics                                                                                                                      |
 | `--show-help-urls`          | Print the spec link for each finding                                                                                                                                       |
 | `--list-rules`              | Print every rule and exit                                                                                                                                                  |
 | `--completion <shell>`      | Print a `bash`, `zsh`, or `fish` completion script and exit                                                                                                                |
@@ -864,6 +869,24 @@ The output summarizes errors and warnings across all linted files. Return codes 
 PROBLEMS=$(stellar-toml-lint --count public/.well-known/stellar.toml)
 echo "Linter status: $PROBLEMS"
 ```
+
+### Silent success output with `--silent-success`
+
+Pre-commit hooks, quiet build jobs, and dense CI matrices are expected to follow the Unix rule that
+silence is golden on success: a run that finds nothing should write nothing. `--silent-success` (also
+accepted as `--quiet-success`) makes the linter emit no stdout at all when the whole run has zero
+diagnostics, whatever reporter is selected:
+
+```console
+$ stellar-toml-lint stellar.toml --silent-success   # clean: no output, exit 0
+$ stellar-toml-lint stellar.toml --silent-success
+12:1  error  currencies/issuance-exclusive  …       # broken: the normal report, exit 1
+```
+
+The exit code is unchanged, so a hook only has to look at `$?`. The moment a single diagnostic exists
+the normal report comes back — errors and warnings are never hidden — and in a multi-file run only the
+files with findings are printed. `--silent-success` is a no-op for output written by the generator flags
+(`--graph`, `--generate-openapi`, `--export-ap-config`), which are explicit requests for stdout.
 
 ### GitHub step summaries
 
