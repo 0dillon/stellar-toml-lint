@@ -769,3 +769,85 @@ describe('CST-backed parsing (#29)', () => {
     expect(result.diagnostics[0]?.position?.line).toBe(2);
   });
 });
+
+describe('testnet contract IDs on Mainnet (#45)', () => {
+  const RULE = 'soroban/testnet-contract-on-mainnet';
+  const TESTNET_NATIVE_SAC = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+  const TESTNET_USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
+  const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
+
+  /** The valid base, but pointing at a different network. */
+  const onTestnet = (body: string): string =>
+    withValidBase(body).replace(
+      '"Public Global Stellar Network ; September 2015"',
+      `"${TESTNET_PASSPHRASE}"`,
+    );
+
+  const nativeCurrency = withValidBase(
+    `[[CURRENCIES]]\ncode="XLMX"\ncontract="${TESTNET_NATIVE_SAC}"\nis_unlimited=true`,
+  );
+
+  it('flags the Testnet native SAC in a Mainnet [[CURRENCIES]] entry', () => {
+    const [d] = find(lint(nativeCurrency), RULE);
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('CURRENCIES[0].contract');
+    expect(d?.position?.line).toBe(5);
+    expect(d?.message).toContain('Stellar Testnet');
+    expect(d?.message).toContain(TESTNET_NATIVE_SAC);
+    expect(d?.helpUri).toBeTruthy();
+    expect(d?.suggestion).toContain('Mainnet');
+  });
+
+  it('flags the Testnet USDC SAC too', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="USDC"\ncontract="${TESTNET_USDC_SAC}"\nis_unlimited=true`,
+    );
+    expect(find(lint(source), RULE)).toHaveLength(1);
+  });
+
+  it('flags a Testnet contract in WEB_AUTH_CONTRACT_ID', () => {
+    const source = withValidBase(`WEB_AUTH_CONTRACT_ID="${TESTNET_NATIVE_SAC}"`);
+    const [d] = find(lint(source), RULE);
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('WEB_AUTH_CONTRACT_ID');
+    expect(d?.position?.line).toBe(3);
+  });
+
+  it('reports every Testnet contract in the file, not just the first', () => {
+    const source = withValidBase(
+      `WEB_AUTH_CONTRACT_ID="${TESTNET_NATIVE_SAC}"\n[[CURRENCIES]]\ncode="USDC"\ncontract="${TESTNET_USDC_SAC}"\nis_unlimited=true`,
+    );
+    expect(find(lint(source), RULE)).toHaveLength(2);
+  });
+
+  it('stays silent on a Testnet file naming a Testnet contract', () => {
+    const result = lint(
+      onTestnet(`[[CURRENCIES]]\ncode="XLMX"\ncontract="${TESTNET_NATIVE_SAC}"\nis_unlimited=true`),
+    );
+    expect(find(result, RULE)).toEqual([]);
+  });
+
+  it('stays silent on a Mainnet contract', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="AAA"\ncontract="${CONTRACT_A}"\nis_unlimited=true`,
+    );
+    expect(find(lint(source), RULE)).toEqual([]);
+  });
+
+  it('only gates on the Public passphrase, not on any non-Testnet one', () => {
+    const source = onTestnet(nativeCurrency).replace(
+      `"${TESTNET_PASSPHRASE}"`,
+      '"My Private Chain ; 2026"',
+    );
+    expect(find(lint(source), RULE)).toEqual([]);
+  });
+
+  it('is switched off by rule id', () => {
+    const result = lint(nativeCurrency, { rules: { [RULE]: 'off' } });
+    expect(find(result, RULE)).toEqual([]);
+  });
+
+  it('registers the rule so --list-rules and --off know it', () => {
+    expect(allRules.map((r) => r.id)).toContain(RULE);
+  });
+});
