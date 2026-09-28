@@ -492,6 +492,16 @@ own description, the permitted values where SEP-1 enumerates them (`live`, `dead
 `private`), and a link to the section of SEP-1 that defines the field. Hovering whitespace, a
 comment, or a key SEP-1 does not define shows nothing at all.
 
+#### VS Code extension
+
+The official client lives in [`editors/vscode/`](./editors/vscode/) and is built on
+`vscode-languageclient/node`. It activates for any file named `stellar.toml` or any
+file inside `.well-known/`, launches `stellar-toml-lint --lsp` over stdio, and
+contributes the `stellar-toml.lint`, `stellar-toml.format`, and
+`stellar-toml.readiness` commands plus the `stellarToml.strict`,
+`stellarToml.domain`, and `stellarToml.rules` settings and a `$(check)`/`$(error)`
+status bar item. Package it with `npm run package:vscode` (wraps `vsce package`).
+
 ### Alerting a Slack or Discord channel
 
 ```console
@@ -1693,6 +1703,23 @@ New contributors are genuinely welcome — see [CONTRIBUTING.md](./CONTRIBUTING.
 matter of appending one object to a list and one fixture to a test.
 
 ## Integrations
+
+### VS Code extension
+
+Official VS Code client for `stellar.toml` files with live SEP-1 diagnostics,
+quick-fix code actions, hover documentation, SEP-1 syntax highlighting, a
+`$(check)`/`$(error)` status bar item, and the `stellar-toml.lint`,
+`stellar-toml.format`, and `stellar-toml.readiness` commands. Activates for
+`stellar.toml` and `.well-known/` files and spawns `stellar-toml-lint --lsp`
+over stdio. Configured via `stellarToml.strict`, `stellarToml.domain`, and
+`stellarToml.rules`.
+
+```bash
+npm run build:vscode
+npm run package:vscode
+```
+
+See [editors/vscode/README.md](./editors/vscode/README.md) for details.
 
 ### JetBrains IDE Plugin
 
