@@ -1379,6 +1379,16 @@ compared against `NETWORK_PASSPHRASE`:
 
 A network whose RPC did not answer is not treated as "absent", so an outage produces no finding.
 
+**Testnet contracts in a Mainnet file** (offline) — the same copy-paste mistake is caught without the
+network. Copying a staging file and updating only `NETWORK_PASSPHRASE` leaves the Soroban addresses
+behind, and a Testnet contract ID in a Mainnet file resolves to nothing on chain. When
+`NETWORK_PASSPHRASE` is exactly the Public passphrase, every `WEB_AUTH_CONTRACT_ID` and
+`[[CURRENCIES]].contract` is matched against a small denylist of known Testnet reference contracts
+(the Testnet native XLM SAC and the Circle Testnet USDC SAC), and a match emits
+`soroban/testnet-contract-on-mainnet` (error) naming the contract and the edit that fixes it. A file
+on Testnet — or on any custom network — is never flagged, so the check stays silent for the team that
+is legitimately deploying there.
+
 **Contract dependencies** (with `--check-contracts`) — a declared contract is rarely the whole
 system, and the edges it depends on are invisible in the file. Each contract's deployed WASM import
 table is read, and every import module name that decodes as a contract address becomes an edge, which
