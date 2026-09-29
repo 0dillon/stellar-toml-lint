@@ -1848,3 +1848,21 @@ Measures response latency of a SEP-8 approval server over 5 sample requests and 
 
 - `sep8/approval-server-unresponsive` - more than 2 of 5 requests fail
 - `sep8/approval-server-high-latency` - average latency exceeds 3000ms SLA
+
+### Exporting configuration for `@stellar/anchor-tests`
+
+Because `stellar-toml-lint` parses, validates, and indexes every field in your `stellar.toml`, it can automatically extract this metadata into a ready-to-run configuration file for the `@stellar/anchor-tests` CLI, closing the gap between local static linting and live integration testing.
+
+Run the linter with `--export-anchor-tests` and pass the path to the JSON file you want to write (or `-` for stdout).
+
+```console
+$ stellar-toml-lint stellar.toml --export-anchor-tests anchor-config.json
+```
+
+If your configuration is missing endpoints required by certain test suites (e.g., `WEB_AUTH_ENDPOINT` for SEP-10 tests or `TRANSFER_SERVER_SEP0024` for SEP-24 tests), the linter will output actionable warnings to standard error so you know which integration tests will be skipped.
+
+You can also pipe the output directly into `anchor-tests`:
+
+```console
+$ stellar-toml-lint stellar.toml --export-anchor-tests - | anchor-tests --sep-config -
+```

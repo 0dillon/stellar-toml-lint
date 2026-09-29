@@ -35,6 +35,7 @@ import {
   formatText,
 } from './reporters.js';
 import { expandGlob, hasMagic } from './glob.js';
+import { generateAnchorTestsConfig } from './integrations/anchor-tests.js';
 import { checkDisplayDecimals } from './rules/display-decimals-audit.js';
 import { checkHorizon } from './rules/horizon-check.js';
 import { checkSep3Auth } from './rules/sep3-auth.js';
@@ -122,6 +123,7 @@ type Format =
   | 'pr-comment';
 
 interface Cli {
+  exportAnchorTests?: string;
   noSuggestions?: boolean;
   paths: string[];
   domain?: string;
@@ -983,6 +985,21 @@ async function main(argv: string[]): Promise<number> {
     }
 
     const lintPassed = verdict(results, { strict, failOn: cli.failOn, maxWarnings });
+    if (cli.exportAnchorTests && results.length > 0) {
+      const firstResult = results[0]!.result;
+      if (firstResult.parsed) {
+        const configObj = generateAnchorTestsConfig(firstResult.parsed as Record<string, any>, cli.domain);
+        const outJson = JSON.stringify(configObj, null, 2) + "\n";
+        if (cli.exportAnchorTests === '-') {
+          process.stdout.write(outJson);
+        } else {
+          await writeFile(cli.exportAnchorTests, outJson, 'utf8');
+        }
+      } else {
+        process.stderr.write("Cannot export anchor tests: TOML was not parsed successfully.\n");
+      }
+    }
+
     return lintPassed && !healthCheckFailed ? 0 : 1;
   };
 
@@ -1115,6 +1132,7 @@ function parseArgs(argv: string[]): Cli | 'handled' {
     auditDiversity: false,
     followLinks: false,
     verifySep10: false,
+      verifySep30: false,
     verifySep38: false,
     crawlPeers: false,
     verifyDnssec: false,
@@ -1165,6 +1183,9 @@ function parseArgs(argv: string[]): Cli | 'handled' {
       case '-d':
       case '--domain':
         cli.domain = requireValue(argv, ++i, arg);
+        break;
+      case '--export-anchor-tests':
+        cli.exportAnchorTests = requireValue(argv, ++i, arg);
         break;
 
       case '-f':

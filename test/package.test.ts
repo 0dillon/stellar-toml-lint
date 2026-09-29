@@ -26,6 +26,7 @@ describe('package metadata', () => {
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
       '@noble/curves',
       '@noble/hashes',
+      '@stellar/anchor-tests',
       '@stellar/stellar-base',
       'smol-toml',
     ]);
