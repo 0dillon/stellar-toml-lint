@@ -465,11 +465,25 @@ export {
   checkSigningKeyMultisig,
   multisigRules,
   multisigRuleIds,
+  SECURITY_SIGNING_KEY_INSUFFICIENT_WEIGHT,
   SECURITY_SIGNING_KEY_SINGLE_SIGNATURE,
   SECURITY_SIGNING_KEY_UNUSABLE,
+  SECURITY_SINGLE_SIGNER_HIGH_THRESHOLD,
+  SECURITY_UNREACHABLE_THRESHOLD,
 } from './security/multisig.js';
 export type {
   HorizonSigner as MultisigHorizonSigner,
   MultisigAnalysisInput,
   MultisigAuditOptions,
 } from './security/multisig.js';
+
+export {
+  analyzeCtCertificates,
+  checkCertificateTransparency,
+  checkCertificateTransparencyFromDocument,
+  ctAuditorRules,
+  ctAuditorRuleIds,
+  SECURITY_MISSING_SCT_TIMESTAMPS,
+  SECURITY_UNRECOGNIZED_CA_IN_CT_LOGS,
+} from './security/ct-auditor.js';
+export type { CtCertificate, CtAuditOptions } from './security/ct-auditor.js';
