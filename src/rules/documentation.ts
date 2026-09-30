@@ -306,31 +306,33 @@ export const documentationRules: Rule[] = [
     },
   },
 
-    {
-      id: 'documentation/license-number-without-authority',
-      category: 'documentation',
-      severity: 'warning',
-      description: 'ORG_LICENSE_NUMBER requires ORG_LICENSING_AUTHORITY',
-      run(ctx) {
-        const documentation = documentationOf(ctx.doc);
-        if (!documentation) return;
+  {
+    id: 'documentation/license-number-without-authority',
+    category: 'documentation',
+    severity: 'warning',
+    description: 'ORG_LICENSE_NUMBER requires ORG_LICENSING_AUTHORITY',
+    run(ctx) {
+      const documentation = documentationOf(ctx.doc);
+      if (!documentation) return;
 
-        const licenseNumber = documentation.ORG_LICENSE_NUMBER;
-        const licensingAuthority = documentation.ORG_LICENSING_AUTHORITY;
+      const licenseNumber = documentation.ORG_LICENSE_NUMBER;
+      const licensingAuthority = documentation.ORG_LICENSING_AUTHORITY;
 
-        if (licenseNumber !== undefined && licensingAuthority === undefined) {
-          ctx.report({
-            rule: 'documentation/license-number-without-authority',
-            category: 'documentation',
-            message: 'ORG_LICENSE_NUMBER is set without ORG_LICENSING_AUTHORITY, making the license unverifiable',
-            path: 'ORG_LICENSE_NUMBER',
-            position: ctx.locate('ORG_LICENSE_NUMBER'),
-            helpUri: specUrl('organization-documentation'),
-            suggestion: 'Add ORG_LICENSING_AUTHORITY to specify the licensing authority, or remove ORG_LICENSE_NUMBER.',
-          });
-        }
+      if (licenseNumber !== undefined && licensingAuthority === undefined) {
+        ctx.report({
+          rule: 'documentation/license-number-without-authority',
+          category: 'documentation',
+          message:
+            'ORG_LICENSE_NUMBER is set without ORG_LICENSING_AUTHORITY, making the license unverifiable',
+          path: 'ORG_LICENSE_NUMBER',
+          position: ctx.locate('ORG_LICENSE_NUMBER'),
+          helpUri: specUrl('organization-documentation'),
+          suggestion:
+            'Add ORG_LICENSING_AUTHORITY to specify the licensing authority, or remove ORG_LICENSE_NUMBER.',
+        });
       }
     },
+  },
   {
     id: 'documentation/unknown-field',
     category: 'documentation',
