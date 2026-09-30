@@ -5,8 +5,8 @@
   "ok": true,
   "counts": {
     "error": 0,
-    "warning": 5,
-    "info": 0
+    "warning": 4,
+    "info": 2
   },
   "diagnostics": [
     {
@@ -49,22 +49,9 @@
       "severity": "warning"
     },
     {
-      "rule": "documentation/social-handles",
-      "category": "documentation",
-      "message": "DOCUMENTATION.ORG_GITHUB should be an account name, not a URL",
-      "path": "DOCUMENTATION.ORG_GITHUB",
-      "position": {
-        "line": 13,
-        "column": 1
-      },
-      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
-      "suggestion": "Use the bare handle, e.g. \"keybase\".",
-      "severity": "warning"
-    },
-    {
-      "rule": "documentation/social-handles",
-      "category": "documentation",
-      "message": "DOCUMENTATION.ORG_TWITTER should be an account name, not a URL",
+      "rule": "general/invalid-twitter-handle",
+      "category": "general",
+      "message": "DOCUMENTATION.ORG_TWITTER must be a bare handle, not a URL",
       "path": "DOCUMENTATION.ORG_TWITTER",
       "position": {
         "line": 14,
@@ -72,7 +59,28 @@
       },
       "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
       "suggestion": "Use the bare handle, e.g. \"KeybaseIO\".",
+      "fix": {
+        "value": "KeybaseIO"
+      },
       "severity": "warning"
+    },
+    {
+      "rule": "documentation/missing-privacy-policy",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_PRIVACY_POLICY is missing",
+      "path": "DOCUMENTATION.ORG_PRIVACY_POLICY",
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Add a link to your organization's privacy policy.",
+      "severity": "info"
+    },
+    {
+      "rule": "documentation/missing-terms-of-service",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_TERMS_OF_SERVICE is missing",
+      "path": "DOCUMENTATION.ORG_TERMS_OF_SERVICE",
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Add a link to your organization's terms of service.",
+      "severity": "info"
     }
   ]
 }

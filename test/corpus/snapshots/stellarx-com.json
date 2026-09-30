@@ -6,7 +6,7 @@
   "counts": {
     "error": 0,
     "warning": 1,
-    "info": 0
+    "info": 2
   },
   "diagnostics": [
     {
@@ -17,6 +17,24 @@
       "path": "NETWORK_PASSPHRASE",
       "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#general-information",
       "suggestion": "Add NETWORK_PASSPHRASE=\"Public Global Stellar Network ; September 2015\" for mainnet."
+    },
+    {
+      "rule": "documentation/missing-privacy-policy",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_PRIVACY_POLICY is missing",
+      "path": "DOCUMENTATION.ORG_PRIVACY_POLICY",
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Add a link to your organization's privacy policy.",
+      "severity": "info"
+    },
+    {
+      "rule": "documentation/missing-terms-of-service",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_TERMS_OF_SERVICE is missing",
+      "path": "DOCUMENTATION.ORG_TERMS_OF_SERVICE",
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Add a link to your organization's terms of service.",
+      "severity": "info"
     }
   ]
 }

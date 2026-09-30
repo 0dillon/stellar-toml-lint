@@ -5,23 +5,10 @@
   "ok": true,
   "counts": {
     "error": 0,
-    "warning": 1,
-    "info": 1
+    "warning": 0,
+    "info": 3
   },
   "diagnostics": [
-    {
-      "rule": "general/https-endpoints",
-      "category": "general",
-      "severity": "warning",
-      "message": "FEDERATION_SERVER has a trailing slash, which can produce double-slash request paths",
-      "path": "FEDERATION_SERVER",
-      "position": {
-        "line": 8,
-        "column": 1
-      },
-      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#general-information",
-      "suggestion": "Remove the trailing slash: https://lobstr.co/federation"
-    },
     {
       "rule": "validators/unknown-field",
       "category": "validators",
@@ -32,6 +19,24 @@
         "column": 1
       },
       "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#validator-information",
+      "severity": "info"
+    },
+    {
+      "rule": "documentation/missing-privacy-policy",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_PRIVACY_POLICY is missing",
+      "path": "DOCUMENTATION.ORG_PRIVACY_POLICY",
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Add a link to your organization's privacy policy.",
+      "severity": "info"
+    },
+    {
+      "rule": "documentation/missing-terms-of-service",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_TERMS_OF_SERVICE is missing",
+      "path": "DOCUMENTATION.ORG_TERMS_OF_SERVICE",
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Add a link to your organization's terms of service.",
       "severity": "info"
     }
   ]
