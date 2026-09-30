@@ -1,8 +1,14 @@
 import type { Rule } from '../types.js';
 import { generalRules } from './general.js';
+import { telegramHandleRules } from './telegram-handle.js';
 import { documentationRules } from './documentation.js';
 import { principalRules } from './principals.js';
-import { currencyRules, sep41MetadataRules, collateralSigFormatRules } from './currencies.js';
+import {
+  currencyRules,
+  sep41MetadataRules,
+  collateralSigFormatRules,
+  duplicateCurrencyRules,
+} from './currencies.js';
 import { regulatedFlagRules } from './regulated-flags.js';
 import { validatorRules } from './validators.js';
 import { validatorDedupRules } from './validator-dedup.js';
@@ -27,7 +33,9 @@ import { overlayHandshakeRules } from '../overlay/handshake.js';
 import { cryptoAuditorRules } from '../overlay/crypto-auditor.js';
 import { historyPublishRules } from '../history/publish-validator.js';
 import { archiveDiffRules } from '../history/archive-diff.js';
+import { bucketAuditorRules } from '../history/bucket-auditor.js';
 import { quorumSolverRules } from '../validators/quorum-solver.js';
+import { quorumAuditRules } from '../validators/quorum.js';
 import { dnsIntegrityRules } from '../security/dns-integrity.js';
 import { certExpiryRules } from '../network/cert-expiry.js';
 import { peerPortRule } from '../validators/net-probe.js';
@@ -35,10 +43,12 @@ import { fixedSupplyLockRules } from './fixed-supply-audit.js';
 import { circularPointerRules } from './circular-pointers.js';
 import { docComplianceRules } from './doc-compliance.js';
 import { networkPassphraseRules } from './network-passphrase.js';
+import { testnetContractRules } from './testnet-contracts.js';
 import { sep7Rules } from '../protocols/sep7.js';
 import { sep6IntegrationRules } from '../protocols/sep6.js';
 import { sep31Rules } from '../protocols/sep31.js';
 import { sep8Rules } from '../protocols/sep8.js';
+import { sep38QuoteRules } from '../protocols/sep38.js';
 import { wasmAuditorRules } from '../soroban/wasm-auditor.js';
 import { envMetaRules } from '../soroban/env-meta.js';
 import { eventRules } from '../soroban/events.js';
@@ -46,10 +56,13 @@ import { adminAuditorRules } from '../soroban/admin-auditor.js';
 import { simulationRules } from '../soroban/simulation.js';
 import { storageFootprintRules } from '../soroban/storage-footprint.js';
 import { authAuditorRules } from '../soroban/auth-auditor.js';
+import { insecureHttpRule } from './insecure-http.js';
+import { multisigRules } from '../security/multisig.js';
 
 /** Every rule, in report order. */
 export const allRules: Rule[] = [
   ...generalRules,
+  insecureHttpRule,
   ...deprecationRules,
   ...documentationRules,
   ...principalRules,
@@ -60,6 +73,7 @@ export const allRules: Rule[] = [
   ...validatorRules,
   ...validatorDedupRules,
   ...securityRules,
+  ...multisigRules,
 
   emailMxRule,
 
@@ -85,6 +99,7 @@ export const allRules: Rule[] = [
   ...sep6IntegrationRules,
   ...sep31Rules,
   ...sep8Rules,
+  ...sep38QuoteRules,
   ...sep7Rules,
   ...corsPreflightRules,
   ...overlayCrawlerRules,
@@ -92,13 +107,16 @@ export const allRules: Rule[] = [
   ...cryptoAuditorRules,
   ...historyPublishRules,
   ...archiveDiffRules,
+  ...bucketAuditorRules,
   ...quorumSolverRules,
+  ...quorumAuditRules,
   ...dnsIntegrityRules,
   ...certExpiryRules,
   peerPortRule,
   ...circularPointerRules,
   ...docComplianceRules,
   ...networkPassphraseRules,
+  ...testnetContractRules,
 ];
 
 /** Rule ids, sorted, for `--list-rules` and docs generation. */
@@ -106,17 +124,20 @@ export const ruleIds: string[] = allRules.map((r) => r.id).sort();
 
 export {
   generalRules,
+  telegramHandleRules,
   deprecationRules,
   documentationRules,
   principalRules,
   currencyRules,
   collateralSigFormatRules,
+  duplicateCurrencyRules,
   fixedSupplyLockRules,
   regulatedFlagRules,
   maxDecimalsRules,
   validatorRules,
   validatorDedupRules,
   securityRules,
+  multisigRules,
   horizonRules,
   sep3Rules,
   sep38Rules,
@@ -134,17 +155,21 @@ export {
   cryptoAuditorRules,
   historyPublishRules,
   archiveDiffRules,
+  bucketAuditorRules,
   quorumSolverRules,
+  quorumAuditRules,
   dnsIntegrityRules,
   certExpiryRules,
   peerPortRule,
   circularPointerRules,
   docComplianceRules,
   networkPassphraseRules,
+  testnetContractRules,
   sep7Rules,
   sep6IntegrationRules,
   sep31Rules,
   sep8Rules,
+  sep38QuoteRules,
   wasmAuditorRules,
   envMetaRules,
   eventRules,
@@ -152,4 +177,5 @@ export {
   simulationRules,
   storageFootprintRules,
   authAuditorRules,
+  insecureHttpRule,
 };
