@@ -2,6 +2,7 @@ import type { Rule } from '../types.js';
 import { KNOWN_DOCUMENTATION_FIELDS, RECOMMENDED_DOCUMENTATION_FIELDS, specUrl } from '../spec.js';
 import {
   hostOf,
+  isDisposableEmail,
   isE164,
   isEmail,
   isHttpsUrl,
@@ -11,7 +12,7 @@ import {
 } from '../predicates.js';
 
 /** Reads the `[DOCUMENTATION]` table, or `undefined` if absent/malformed. */
-function documentationOf(doc: Record<string, unknown>): Record<string, unknown> | undefined {
+export function documentationOf(doc: Record<string, unknown>): Record<string, unknown> | undefined {
   const table = doc.DOCUMENTATION;
   if (typeof table !== 'object' || table === null || Array.isArray(table)) return undefined;
   return table as Record<string, unknown>;
@@ -240,6 +241,37 @@ export const documentationRules: Rule[] = [
   },
 
   {
+    id: 'documentation/disposable-email',
+    category: 'documentation',
+    severity: 'warning',
+    description: 'Contact emails must not use disposable or temporary providers',
+    run(ctx) {
+      const documentation = documentationOf(ctx.doc);
+      if (!documentation) return;
+
+      for (const field of ['ORG_OFFICIAL_EMAIL', 'ORG_SUPPORT_EMAIL']) {
+        const value = documentation[field];
+        // Malformed addresses belong to documentation/emails; report each
+        // address at most once, by the rule that owns its problem.
+        if (!isString(value) || !isEmail(value)) continue;
+        if (!isDisposableEmail(value)) continue;
+
+        const domain = value.split('@')[1]?.toLowerCase();
+        ctx.report({
+          rule: 'documentation/disposable-email',
+          category: 'documentation',
+          message: `DOCUMENTATION.${field} uses the disposable email provider ${domain}`,
+          path: `DOCUMENTATION.${field}`,
+          position: ctx.locate(`DOCUMENTATION.${field}`),
+          helpUri: specUrl('organization-documentation'),
+          suggestion:
+            'Publish a permanently maintained address on your own domain; throwaway contacts get listing applications rejected.',
+        });
+      }
+    },
+  },
+
+  {
     id: 'documentation/phone-e164',
     category: 'documentation',
     severity: 'warning',
@@ -263,6 +295,7 @@ export const documentationRules: Rule[] = [
         suggestion: digits
           ? `Use a leading + and digits only, e.g. "+${digits}".`
           : 'Use a leading + followed by country code and number, e.g. "+14155552671".',
+        ...(isE164(`+${digits}`) ? { fix: { value: `+${digits}` } } : {}),
       });
     },
   },
@@ -276,7 +309,12 @@ export const documentationRules: Rule[] = [
       const documentation = documentationOf(ctx.doc);
       if (!documentation) return;
 
-      for (const field of ['ORG_TWITTER', 'ORG_GITHUB', 'ORG_KEYBASE']) {
+      // ORG_GITHUB and ORG_TWITTER are deliberately absent: a github.com
+      // profile URL is an accepted form for the former, and the latter wants a
+      // bare handle either way, so `general/invalid-github-handle` and
+      // `general/invalid-twitter-handle` own those fields outright — one
+      // problem, one diagnostic.
+      for (const field of ['ORG_KEYBASE']) {
         const value = documentation[field];
         if (!isString(value)) continue;
 
@@ -290,6 +328,7 @@ export const documentationRules: Rule[] = [
             position: ctx.locate(`DOCUMENTATION.${field}`),
             helpUri: specUrl('organization-documentation'),
             suggestion: `Use the bare handle, e.g. "${handle}".`,
+            fix: { value: handle },
           });
         } else if (value.startsWith('@')) {
           ctx.report({
@@ -300,6 +339,7 @@ export const documentationRules: Rule[] = [
             position: ctx.locate(`DOCUMENTATION.${field}`),
             helpUri: specUrl('organization-documentation'),
             suggestion: `Use "${value.slice(1)}".`,
+            fix: { value: value.slice(1) },
           });
         }
       }

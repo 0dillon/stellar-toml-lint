@@ -25,7 +25,7 @@
  * structure around values.
  */
 import { parse } from 'smol-toml';
-import { parseDiagnostic } from './lint.js';
+import type { Diagnostic, Position } from './types.js';
 import {
   CURRENCY_FIELDS,
   DOCUMENTATION_FIELDS,
@@ -34,6 +34,52 @@ import {
   TABLE_ORDER,
   VALIDATOR_FIELDS,
 } from './spec.js';
+
+/**
+ * Converts a `smol-toml` parse failure into a positioned diagnostic.
+ *
+ * Deliberately local: `lint()` reads documents with the CST parser now, while
+ * the formatter still parses with `smol-toml` to prove its rewrite round-trips,
+ * so it needs the error shape `smol-toml` actually throws.
+ */
+function parseDiagnostic(error: unknown, source: string): Diagnostic {
+  const position = positionOf(error) ?? (source.length > 0 ? { line: 1, column: 1 } : undefined);
+
+  return {
+    rule: 'file/parse',
+    severity: 'error',
+    category: 'file',
+    message: `Invalid TOML: ${cleanParseMessage(error)}`,
+    position,
+    helpUri: 'https://toml.io/en/v1.0.0',
+    suggestion: 'Fix the syntax error — no other checks can run until the file parses.',
+  };
+}
+
+/**
+ * `smol-toml` throws a plain `Error` in some builds, but still attaches `line`
+ * and `column`. Read them defensively rather than losing the position.
+ */
+function positionOf(error: unknown): Position | undefined {
+  if (typeof error === 'object' && error !== null) {
+    const candidate = error as { line?: unknown; column?: unknown };
+    if (typeof candidate.line === 'number' && typeof candidate.column === 'number') {
+      return { line: candidate.line, column: candidate.column };
+    }
+  }
+  return undefined;
+}
+
+/** Strips the code frame that `smol-toml` appends to its message. */
+function cleanParseMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message
+      .split('\n')[0]
+      ?.replace(/^Invalid TOML document:\s*/i, '')
+      .trim() || 'could not parse the file'
+  );
+}
 
 /** Result of a format attempt. On failure `output` is deliberately absent. */
 export type FormatResult =

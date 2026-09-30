@@ -1,11 +1,15 @@
 import type { Diagnostic, LintResult, Severity } from './types.js';
 
+export { formatHtml } from './reporters/html.js';
+export { formatPrComment } from './reporters/pr-comment.js';
+
 /** Minimal ANSI helpers. Avoids a dependency for what is a dozen escape codes. */
-function makeColors(enabled: boolean) {
+export function makeColors(enabled: boolean) {
   const wrap = (open: number, close: number) => (s: string) =>
     enabled ? `[${open}m${s}[${close}m` : s;
   return {
     red: wrap(31, 39),
+    green: wrap(32, 39),
     yellow: wrap(33, 39),
     blue: wrap(34, 39),
     grey: wrap(90, 39),
@@ -112,8 +116,125 @@ function summaryLine(result: LintResult, c: ReturnType<typeof makeColors>): stri
   return error > 0 ? c.red(c.bold(text)) : warning > 0 ? c.yellow(text) : c.grey(text);
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return n === 1 ? word : `${word}s`;
+}
+
+/**
+ * Emits only the problem count line: `3 problems (1 error, 2 warnings)`.
+ *
+ * Designed for bash scripts and CI status checks that need a minimal output
+ * format without diagnostic text. Summarizes errors and warnings across the
+ * linted results.
+ */
+export function formatCount(
+  target: { result: LintResult }[] | LintResult,
+  options: { color?: boolean } = {},
+): string {
+  const c = makeColors(options.color ?? false);
+  const results = Array.isArray(target) ? target : [{ result: target }];
+  const totalErrors = results.reduce((acc, { result }) => acc + result.counts.error, 0);
+  const totalWarnings = results.reduce((acc, { result }) => acc + result.counts.warning, 0);
+  const totalProblems = totalErrors + totalWarnings;
+  const line = `${totalProblems} ${plural(totalProblems, 'problem')} (${totalErrors} ${plural(totalErrors, 'error')}, ${totalWarnings} ${plural(totalWarnings, 'warning')})`;
+  const painted =
+    totalErrors > 0 ? c.red(c.bold(line)) : totalWarnings > 0 ? c.yellow(line) : c.green(line);
+  return `${painted}\n`;
+}
+
+/**
+ * The closing line of a multi-file run: `Checked 4 files: 3 passed, 1 failed
+ * (2 errors, 3 warnings)`.
+ *
+ * Pass/fail is counted per file from each result's own verdict, so `--strict`
+ * is reflected exactly as it is in that file's report; the totals behind the
+ * parentheses are summed across every file, which is what a CI log needs to
+ * judge the whole set at a glance.
+ *
+ * Named for the run rather than for a summary because `formatSummary` below
+ * reports one file's status on one line, and the two are easily confused when
+ * both are in scope.
+ */
+export function formatRunSummary(
+  entries: { name: string; result: LintResult }[],
+  options: { color?: boolean } = {},
+): string {
+  const c = makeColors(options.color ?? false);
+
+  const checked = entries.length;
+  const passed = entries.filter((entry) => entry.result.ok).length;
+  const failed = checked - passed;
+
+  const totals = entries.reduce(
+    (acc, { result }) => {
+      acc.error += result.counts.error;
+      acc.warning += result.counts.warning;
+      acc.info += result.counts.info;
+      return acc;
+    },
+    { error: 0, warning: 0, info: 0 },
+  );
+
+  // Errors and warnings are always named, because they are what the exit code
+  // reacts to; info only earns a mention when there is some to mention.
+  const parts = [
+    `${totals.error} ${plural(totals.error, 'error')}`,
+    `${totals.warning} ${plural(totals.warning, 'warning')}`,
+  ];
+  if (totals.info > 0) parts.push(`${totals.info} ${plural(totals.info, 'info')}`);
+
+  const line = `Checked ${checked} ${plural(checked, 'file')}: ${passed} passed, ${failed} failed (${parts.join(', ')})`;
+
+  // The leading newline separates it from the last file's own summary, which
+  // every text block already ends with.
+  const text = `\n${line}\n`;
+  return failed > 0 ? c.red(c.bold(text)) : totals.warning > 0 ? c.yellow(text) : c.grey(text);
+}
+
+export interface SummaryReporterOptions {
+  /** Green for a pass, yellow when only warnings were found, red for a fail. */
+  color?: boolean;
+}
+
+/**
+ * One line per file: `stellar.toml: PASS (0 errors, 0 warnings)`.
+ *
+ * The other formats answer "what is wrong, and where"; this one answers "did
+ * it pass", which is the only question a pre-push hook, a monitoring poll, or a
+ * status line has room to ask. Holding it to a single line is the whole point —
+ * `grep`, `awk`, and a line-oriented CI log can all read it without a parser,
+ * and one file's report can never spill into the next file's status.
+ *
+ * The verdict is {@link LintResult.ok} rather than a count computed here, so
+ * `PASS`/`FAIL` means exactly what it means in the text report and in the exit
+ * code: `--strict` turns a warning into a `FAIL` in all three. Nothing here can
+ * change which exit code the CLI returns.
+ *
+ * Info findings are named only when there are some, exactly as the closing line
+ * of a multi-file run does, so a file carrying nothing but info notes still
+ * says so rather than reading as untouched.
+ */
+export function formatSummary(
+  result: LintResult,
+  filename = 'stellar.toml',
+  options: SummaryReporterOptions = {},
+): string {
+  const c = makeColors(options.color ?? false);
+  const { error, warning, info } = result.counts;
+
+  const counts = [`${error} ${plural(error, 'error')}`, `${warning} ${plural(warning, 'warning')}`];
+  if (info > 0) counts.push(`${info} ${plural(info, 'info')}`);
+
+  // The one-line contract has to survive the one input the caller does not
+  // control: a path is a shell argument, and a filename holding a newline would
+  // otherwise split one file's status across two lines of a monitoring log.
+  const name = filename.replace(/[\r\n]+/g, ' ');
+  const text = `${name}: ${result.ok ? 'PASS' : 'FAIL'} (${counts.join(', ')})`;
+
+  // Driven by the verdict rather than the error count alone, so a `--strict`
+  // run that fails on a warning is red for the same reason it exits 1.
+  const painted = !result.ok ? c.red(c.bold(text)) : warning > 0 ? c.yellow(text) : c.green(text);
+  return `${painted}\n`;
 }
 
 /** Machine-readable output for scripts and dashboards. */
@@ -217,4 +338,247 @@ export function formatSarif(
 /** SARIF artifact URIs must be relative and forward-slashed. */
 function toUri(filename: string): string {
   return filename.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * JUnit XML, which Jenkins, Bamboo, CircleCI and Azure DevOps parse to draw
+ * pass/fail charts and test suite summaries.
+ *
+ * A lint run maps onto the schema the way a test suite does: the file is the
+ * `<testsuite>`, and every diagnostic is a `<testcase>` named after its rule.
+ *
+ * JUnit has no notion of a non-fatal problem, so the two outcome elements are
+ * split by what actually fails the run: `<failure>` is reserved for the
+ * error-severity findings that drive the exit code, so a dashboard that counts
+ * failures agrees with CI. Warnings and info land in `<error>` entries — still
+ * visible, without claiming the file failed — and carry their severity in the
+ * `type` attribute so the difference is machine-readable.
+ */
+export function formatJunit(result: LintResult, filename = 'stellar.toml'): string {
+  const cases = result.diagnostics.map((d) => {
+    const outcome = d.severity === 'error' ? 'failure' : 'error';
+    const attributes = [
+      `name="${escapeXmlAttribute(d.rule)}"`,
+      `classname="${escapeXmlAttribute(d.category)}"`,
+      `file="${escapeXmlAttribute(filename)}"`,
+      ...(d.position ? [`line="${d.position.line}"`] : []),
+      'time="0"',
+    ].join(' ');
+
+    // The element body carries what the terminal reporter shows under the
+    // message: the concrete next step, and the spec link when one is known.
+    const body = [d.message, d.suggestion, d.helpUri].filter(hasText).join('\n');
+
+    return [
+      `    <testcase ${attributes}>`,
+      `      <${outcome} type="${d.severity}" message="${escapeXmlAttribute(d.message)}">${escapeXml(body)}</${outcome}>`,
+      '    </testcase>',
+    ].join('\n');
+  });
+
+  const counts = [
+    `tests="${result.diagnostics.length}"`,
+    `failures="${result.counts.error}"`,
+    `errors="${result.counts.warning + result.counts.info}"`,
+  ].join(' ');
+
+  const suite = [
+    `  <testsuite name="${escapeXmlAttribute(filename)}" ${counts} skipped="0" time="0">`,
+    ...cases,
+    '  </testsuite>',
+  ];
+
+  // No XML declaration is emitted. A run over several files concatenates one
+  // document per file onto stdout, and a declaration anywhere but the very
+  // first byte is a parse error, so omitting it is the honest option.
+  return [
+    `<testsuites name="${escapeXmlAttribute('stellar-toml-lint')}" ${counts}>`,
+    ...suite,
+    '</testsuites>',
+    '',
+  ].join('\n');
+}
+
+function hasText(value: string | undefined): value is string {
+  return value !== undefined && value !== '';
+}
+
+/**
+ * Escapes XML text, replacing the characters XML 1.0 forbids with U+FFFD.
+ *
+ * Diagnostic messages quote values read out of the linted file, so neither the
+ * markup characters nor stray control bytes can be assumed away. A control
+ * character that survives into the document makes a parser reject all of it,
+ * which in CI looks like the linter failed to run at all.
+ */
+function escapeXml(s: string): string {
+  return sanitizeXmlChars(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * XML 1.0 permits tab, newline, carriage return, and everything from #x20
+ * upward that is not a lone surrogate or a noncharacter. Written as Unicode
+ * property escapes because the literal form is a control-character regex.
+ */
+function sanitizeXmlChars(s: string): string {
+  return s.replace(/[\p{Cc}\p{Cs}\uFFFE\uFFFF]/gu, (char) =>
+    char === '\t' || char === '\n' || char === '\r' ? char : '\uFFFD',
+  );
+}
+
+/** Attributes additionally have to escape both quote characters. */
+function escapeXmlAttribute(s: string): string {
+  return escapeXml(s).replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+/**
+ * Checkstyle XML, the shape Jenkins (Warnings NG), SonarQube-adjacent
+ * dashboards, and Java-adjacent CI pipelines read for static-analysis results.
+ *
+ * The document mirrors what Checkstyle itself emits: one `<file>` per linted
+ * file, one `<error>` per diagnostic carrying `line`, `column`, `severity`,
+ * `message`, and `source`. `source` holds the rule id so a consumer can group,
+ * baseline, or suppress findings the way it would a Checkstyle check.
+ * Severity maps straight across (`error`, `warning`, `info`).
+ *
+ * `line` and `column` are always present, defaulting to 1: the format treats
+ * them as required attributes even for a finding about an absent key that has
+ * no position of its own — the same compromise SARIF makes for the same
+ * diagnostics.
+ *
+ * Like `formatJunit`, no XML declaration is emitted. A run over several files
+ * concatenates one document per file onto stdout, and a declaration anywhere
+ * but the very first byte is a parse error, so omitting it is the honest
+ * option.
+ */
+export function formatCheckstyle(
+  result: LintResult,
+  filename = 'stellar.toml',
+  version = '0.1.0',
+): string {
+  const errors = result.diagnostics.map((d) => {
+    const attributes = [
+      `line="${Math.max(d.position?.line ?? 1, 1)}"`,
+      `column="${Math.max(d.position?.column ?? 1, 1)}"`,
+      `severity="${d.severity}"`,
+      `message="${escapeXmlAttribute(d.message)}"`,
+      `source="${escapeXmlAttribute(d.rule)}"`,
+    ].join(' ');
+    return `    <error ${attributes} />`;
+  });
+
+  return [
+    `<checkstyle version="${escapeXmlAttribute(version)}">`,
+    `  <file name="${escapeXmlAttribute(filename)}">`,
+    ...errors,
+    '  </file>',
+    '</checkstyle>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * GitHub-flavored Markdown for a workflow's `$GITHUB_STEP_SUMMARY`.
+ *
+ * GitHub Actions caps the inline annotations `--format github` emits at ten
+ * per run, and scatters the rest across commits and files. Piping this report
+ * into the step summary instead renders the whole run — a pass/fail badge, the
+ * error and warning counts, and one table row per finding — on the Action
+ * overview page. Each diagnostic with a suggestion or spec link also gets a
+ * collapsible `<details>` block so the table stays scannable.
+ *
+ * ```bash
+ * stellar-toml-lint --format markdown >> "$GITHUB_STEP_SUMMARY"
+ * ```
+ */
+export function formatMarkdown(result: LintResult, filename = 'stellar.toml'): string {
+  const { error, warning, info } = result.counts;
+  const name = escapeMarkdown(filename);
+
+  if (result.diagnostics.length === 0) {
+    return `### ✅ ${name}: No SEP-1 issues found\n`;
+  }
+
+  const status = result.ok ? '✅ Passed' : '❌ Failed';
+  const lines: string[] = [
+    `### ${status}: ${name}`,
+    '',
+    `**${error} ${plural(error, 'error')}**, **${warning} ${plural(warning, 'warning')}**, **${info} ${plural(info, 'info')}**`,
+    '',
+    '| Location | Severity | Rule | Message |',
+    '| --- | --- | --- | --- |',
+  ];
+
+  for (const d of result.diagnostics) {
+    lines.push(
+      `| ${escapeMarkdownCell(locationOf(d))} | ${d.severity} | ${escapeMarkdownCell(d.rule)} | ${escapeMarkdownCell(d.message)} |`,
+    );
+  }
+
+  const details = result.diagnostics.filter((d) => hasText(d.suggestion) || hasText(d.helpUri));
+  if (details.length > 0) {
+    lines.push('');
+    lines.push('<details>');
+    lines.push(`<summary>Details &amp; suggestions (${details.length})</summary>`);
+    lines.push('');
+    for (const d of details) {
+      lines.push(`- **${escapeMarkdownCell(d.rule)}** (${escapeMarkdownCell(locationOf(d))})`);
+      if (hasText(d.suggestion)) lines.push(`  - ${escapeMarkdownCell(d.suggestion)}`);
+      if (hasText(d.helpUri)) lines.push(`  - Spec: <${d.helpUri}>`);
+    }
+    lines.push('');
+    lines.push('</details>');
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Escapes the characters GitHub's Markdown renderer would otherwise read as
+ * markup. Diagnostic messages quote values straight out of the linted file, so
+ * a `|` in a currency code or a `<script>` in a description must not be able to
+ * break the table or inject markup into the run summary.
+ */
+function escapeMarkdown(s: string): string {
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/([|`<>*_[\]])/g, '\\$1')
+    .replace(/\r?\n/g, ' ');
+}
+
+/**
+ * Table cells additionally have to escape their column separator, and the
+ * angle brackets a raw `<` would open a tag with inside the summary document.
+ */
+function escapeMarkdownCell(s: string): string {
+  return s.replace(/\|/g, '\\|').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r?\n/g, ' ');
+}
+
+/** Newline-delimited JSON for streaming analysis. */
+export function formatNdjson(result: LintResult, filename = 'stellar.toml'): string {
+  const lines: string[] = [];
+
+  for (const d of result.diagnostics) {
+    lines.push(
+      JSON.stringify({
+        type: 'diagnostic',
+        file: filename,
+        rule: d.rule,
+        severity: d.severity,
+        message: d.message,
+        ...(d.position ? { position: d.position } : {}),
+      }),
+    );
+  }
+
+  lines.push(
+    JSON.stringify({
+      type: 'summary',
+      file: filename,
+      ok: result.ok,
+      counts: result.counts,
+    }),
+  );
+
+  return `${lines.join('\n')}\n`;
 }

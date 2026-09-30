@@ -1,6 +1,6 @@
 import type { Rule } from '../types.js';
 import { KNOWN_PRINCIPAL_FIELDS, specUrl } from '../spec.js';
-import { isEmail, isHex, isString } from '../predicates.js';
+import { isDisposableEmail, isEmail, isHex, isString } from '../predicates.js';
 
 /** Reads `[[PRINCIPALS]]` as a list of tables, ignoring malformed entries. */
 function principalsOf(doc: Record<string, unknown>): Record<string, unknown>[] {
@@ -89,6 +89,34 @@ export const principalRules: Rule[] = [
   },
 
   {
+    id: 'principals/disposable-email',
+    category: 'principals',
+    severity: 'warning',
+    description: 'Principal contact emails must not use disposable or temporary providers',
+    run(ctx) {
+      principalsOf(ctx.doc).forEach((entry, i) => {
+        const email = entry.email;
+        // Malformed addresses belong to principals/required-fields; report
+        // each address at most once, by the rule that owns its problem.
+        if (!isString(email) || !isEmail(email)) return;
+        if (!isDisposableEmail(email)) return;
+
+        const domain = email.split('@')[1]?.toLowerCase();
+        ctx.report({
+          rule: 'principals/disposable-email',
+          category: 'principals',
+          message: `PRINCIPALS[${i}].email uses the disposable email provider ${domain}`,
+          path: `PRINCIPALS[${i}].email`,
+          position: ctx.locate(`PRINCIPALS[${i}].email`),
+          helpUri: specUrl('point-of-contact-documentation'),
+          suggestion:
+            'Partners must be able to reach this contact: use a permanently maintained address on your own domain.',
+        });
+      });
+    },
+  },
+
+  {
     id: 'principals/photo-hashes',
     category: 'principals',
     severity: 'error',
@@ -160,6 +188,7 @@ export const principalRules: Rule[] = [
             position: ctx.locate(`${path}.${field}`),
             helpUri: specUrl('point-of-contact-documentation'),
             suggestion: `Use "${handle}".`,
+            fix: { value: handle },
           });
         }
       });

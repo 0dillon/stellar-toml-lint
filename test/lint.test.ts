@@ -20,11 +20,18 @@ function find(result: LintResult, rule: string): Diagnostic[] {
   return result.diagnostics.filter((d) => d.rule === rule);
 }
 
-/** Wraps a document body so rules that need context are satisfied. */
+/**
+ * Wraps a document body so rules that need context are satisfied.
+ *
+ * The body is emitted *before* `[DOCUMENTATION]`: TOML captures every key
+ * under the preceding table header, so a global field placed after the
+ * section would silently become `DOCUMENTATION.<field>`.
+ */
 function withValidBase(body: string): string {
   return [
     'VERSION="2.7.0"',
     'NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"',
+    body,
     '',
     '[DOCUMENTATION]',
     'ORG_NAME="Example"',
@@ -32,8 +39,8 @@ function withValidBase(body: string): string {
     'ORG_DESCRIPTION="Example"',
     'ORG_LOGO="https://example.com/logo.png"',
     'ORG_OFFICIAL_EMAIL="ops@example.com"',
-    '',
-    body,
+    'ORG_PRIVACY_POLICY="https://example.com/privacy"',
+    'ORG_TERMS_OF_SERVICE="https://example.com/terms"',
   ].join('\n');
 }
 
@@ -70,12 +77,14 @@ describe('broken fixture', () => {
     'general/version',
     'network/passphrase',
     'general/https-endpoints',
+    'general/trailing-slash-in-endpoint',
     'general/signing-keys',
     'general/accounts',
     'general/sep31-requires-kyc',
     'general/auth-requires-signing-key',
     'general/deprecated-field',
     'general/unknown-field',
+    'general/invalid-twitter-handle',
     'documentation/urls',
     'documentation/emails',
     'documentation/phone-e164',
@@ -85,18 +94,19 @@ describe('broken fixture', () => {
     'principals/required-fields',
     'principals/photo-hashes',
     'principals/social-handles',
-    'currencies/code',
+    'currencies/asset-code-too-long',
     'currencies/issuer-or-contract',
     'currencies/issuance-exclusive',
     'currencies/enums',
     'currencies/display-decimals',
     'currencies/name-length',
     'currencies/regulated-needs-approval-server',
+    'currencies/regulated-invalid-target',
     'currencies/collateral-consistency',
     'validators/alias',
     'validators/public-key',
     'validators/host',
-    'validators/history',
+    'validators/invalid-history-url',
   ])('detects %s', (rule) => {
     expect(rules(result)).toContain(rule);
   });
@@ -104,7 +114,9 @@ describe('broken fixture', () => {
   it('gives every diagnostic a message and a rule id', () => {
     for (const d of result.diagnostics) {
       expect(d.message.length).toBeGreaterThan(0);
-      expect(d.rule).toMatch(/^[a-z]+\/[a-z0-9-]+$/);
+      // Namespaces may contain digits (sep12/...), so the first segment is
+      // [a-z][a-z0-9]* rather than [a-z]+.
+      expect(d.rule).toMatch(/^[a-z][a-z0-9]*\/[a-z0-9-]+$/);
     }
   });
 
@@ -263,6 +275,33 @@ describe('the native asset', () => {
     const result = lint(withValidBase('[[CURRENCIES]]\ncode="USDC"'));
     expect(find(result, 'currencies/issuer-or-contract')).toHaveLength(1);
   });
+
+  it('flags display_decimals on the native asset as info', () => {
+    const result = lint(withValidBase('[[CURRENCIES]]\ncode="native"\ndisplay_decimals=2'));
+    const [d] = find(result, 'currencies/display-decimals');
+    expect(d?.severity).toBe('info');
+    expect(d?.message).toContain('native asset');
+    expect(d?.path).toBe('CURRENCIES[0].display_decimals');
+  });
+
+  it('flags display_decimals on bare XLM with no issuer', () => {
+    const result = lint(withValidBase('[[CURRENCIES]]\ncode="XLM"\ndisplay_decimals=2'));
+    expect(find(result, 'currencies/display-decimals')).toHaveLength(1);
+  });
+
+  it('stays silent when the native entry omits display_decimals', () => {
+    const result = lint(withValidBase('[[CURRENCIES]]\ncode="native"'));
+    expect(find(result, 'currencies/display-decimals')).toEqual([]);
+  });
+
+  it('stays silent when a non-native entry sets display_decimals', () => {
+    const result = lint(
+      withValidBase(
+        `[[CURRENCIES]]\ncode="USDC"\nissuer="${ACCOUNT_A}"\ndisplay_decimals=2\nis_unlimited=true`,
+      ),
+    );
+    expect(find(result, 'currencies/display-decimals')).toEqual([]);
+  });
 });
 
 describe('currencies/toml-pointer', () => {
@@ -284,11 +323,11 @@ describe('currencies/toml-pointer', () => {
   });
 });
 
-describe('currencies/duplicate-asset', () => {
+describe('currencies/duplicate-currency-declaration', () => {
   it('flags the same code and issuer twice', () => {
     const entry = `[[CURRENCIES]]\ncode="AAA"\nissuer="${ACCOUNT_A}"\nis_unlimited=true`;
     const result = lint(withValidBase(`${entry}\n\n${entry}`));
-    expect(find(result, 'currencies/duplicate-asset')).toHaveLength(1);
+    expect(find(result, 'currencies/duplicate-currency-declaration')).toHaveLength(1);
   });
 
   it('allows the same code from different issuers', () => {
@@ -298,7 +337,7 @@ describe('currencies/duplicate-asset', () => {
           `[[CURRENCIES]]\ncode="AAA"\nissuer="${ACCOUNT_B}"\nis_unlimited=true`,
       ),
     );
-    expect(find(result, 'currencies/duplicate-asset')).toEqual([]);
+    expect(find(result, 'currencies/duplicate-currency-declaration')).toEqual([]);
   });
 });
 
@@ -335,6 +374,292 @@ describe('source positions', () => {
   });
 });
 
+describe('validators/alias-reserved-keyword', () => {
+  const validator = (alias: string): string =>
+    withValidBase(
+      `[[VALIDATORS]]\nALIAS="${alias}"\nPUBLIC_KEY="${ACCOUNT_A}"\nHOST="core.example.com:11625"`,
+    );
+
+  it.each(['self', 'all', 'default', 'none', 'quorum', 'peers', 'manual', 'auto'])(
+    'flags "%s" as a reserved stellar-core keyword',
+    (alias) => {
+      const result = lint(validator(alias));
+      expect(find(result, 'validators/alias-reserved-keyword')[0]?.message).toContain('reserved');
+    },
+  );
+
+  it('suggests a node-indexed alias', () => {
+    const [d] = find(lint(validator('self')), 'validators/alias-reserved-keyword');
+    expect(d?.suggestion).toContain('self-0');
+  });
+
+  it('leaves an ordinary alias clean', () => {
+    const result = lint(validator('core-1'));
+    expect(find(result, 'validators/alias-reserved-keyword')).toEqual([]);
+  });
+});
+
+describe('cross-SEP structural consistency', () => {
+  const NEW_RULES = [
+    'general/sep24-requires-auth',
+    'general/kyc-requires-auth',
+    'general/sep38-requires-auth',
+    'general/transfer-server-needs-currencies',
+    'currencies/anchored-fiat-needs-transfer-server',
+    'currencies/regulated-invalid-target',
+  ];
+
+  const AUTH = 'WEB_AUTH_ENDPOINT="https://api.example.com/auth"';
+  const SEP6 = 'TRANSFER_SERVER="https://api.example.com/sep6"';
+  const SEP24 = 'TRANSFER_SERVER_SEP0024="https://api.example.com/sep24"';
+
+  it('flags TRANSFER_SERVER_SEP0024 without WEB_AUTH_ENDPOINT', () => {
+    const [d] = find(lint(withValidBase(SEP24)), 'general/sep24-requires-auth');
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('TRANSFER_SERVER_SEP0024');
+    expect(d?.position?.line).toBe(3);
+    expect(d?.helpUri).toBeTruthy();
+    expect(d?.suggestion).toContain('SEP-10');
+  });
+
+  it('flags KYC_SERVER without WEB_AUTH_ENDPOINT', () => {
+    const [d] = find(
+      lint(withValidBase('KYC_SERVER="https://api.example.com/kyc"')),
+      'general/kyc-requires-auth',
+    );
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('KYC_SERVER');
+    expect(d?.position?.line).toBe(3);
+    expect(d?.suggestion).toBeTruthy();
+  });
+
+  it('flags ANCHOR_QUOTE_SERVER without WEB_AUTH_ENDPOINT', () => {
+    const [d] = find(
+      lint(withValidBase('ANCHOR_QUOTE_SERVER="https://api.example.com/sep38"')),
+      'general/sep38-requires-auth',
+    );
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('ANCHOR_QUOTE_SERVER');
+    expect(d?.position?.line).toBe(3);
+    expect(d?.suggestion).toBeTruthy();
+  });
+
+  it('stays silent on the auth pairing once WEB_AUTH_ENDPOINT is present', () => {
+    const result = lint(
+      withValidBase(
+        `${SEP24}\nKYC_SERVER="https://api.example.com/kyc"\nANCHOR_QUOTE_SERVER="https://api.example.com/sep38"\n${AUTH}`,
+      ),
+    );
+    expect(rules(result)).not.toContain('general/sep24-requires-auth');
+    expect(rules(result)).not.toContain('general/kyc-requires-auth');
+    expect(rules(result)).not.toContain('general/sep38-requires-auth');
+  });
+
+  it('flags a transfer server with no [[CURRENCIES]]', () => {
+    const [d] = find(lint(withValidBase(SEP6)), 'general/transfer-server-needs-currencies');
+    expect(d?.severity).toBe('warning');
+    expect(d?.path).toBe('TRANSFER_SERVER');
+    expect(d?.position?.line).toBe(3);
+    expect(d?.suggestion).toContain('[[CURRENCIES]]');
+  });
+
+  it('flags TRANSFER_SERVER_SEP0024 alone when [[CURRENCIES]] is absent', () => {
+    const [d] = find(lint(withValidBase(SEP24)), 'general/transfer-server-needs-currencies');
+    expect(d?.path).toBe('TRANSFER_SERVER_SEP0024');
+  });
+
+  it('reports once, anchored at TRANSFER_SERVER, when both servers are declared', () => {
+    const result = lint(withValidBase(`${SEP6}\n${SEP24}`));
+    const found = find(result, 'general/transfer-server-needs-currencies');
+    expect(found).toHaveLength(1);
+    expect(found[0]?.path).toBe('TRANSFER_SERVER');
+  });
+
+  it('flags an explicitly empty [[CURRENCIES]] array', () => {
+    const result = lint(withValidBase(`${SEP6}\nCURRENCIES=[]`));
+    expect(find(result, 'general/transfer-server-needs-currencies')).toHaveLength(1);
+  });
+
+  it('stays silent when the transfer server has currencies', () => {
+    const source = withValidBase(
+      `${SEP6}\n\n[[CURRENCIES]]\ncode="AAA"\nissuer="${ACCOUNT_A}"\nis_unlimited=true`,
+    );
+    expect(rules(lint(source))).not.toContain('general/transfer-server-needs-currencies');
+  });
+
+  it('stays silent with no transfer server declared', () => {
+    expect(rules(lint(withValidBase('')))).not.toContain(
+      'general/transfer-server-needs-currencies',
+    );
+  });
+
+  it('flags anchored fiat with no transfer server', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="USDX"\nissuer="${ACCOUNT_A}"\nis_unlimited=true\nis_asset_anchored=true\nanchor_asset_type="fiat"\nanchor_asset="USD"`,
+    );
+    const [d] = find(lint(source), 'currencies/anchored-fiat-needs-transfer-server');
+    expect(d?.severity).toBe('warning');
+    expect(d?.path).toBe('CURRENCIES[0]');
+    expect(d?.position?.line).toBe(3);
+    expect(d?.suggestion).toContain('TRANSFER_SERVER');
+  });
+
+  it('stays silent on anchored fiat once a transfer server is declared', () => {
+    const source = withValidBase(
+      `${SEP6}\n\n[[CURRENCIES]]\ncode="USDX"\nissuer="${ACCOUNT_A}"\nis_unlimited=true\nis_asset_anchored=true\nanchor_asset_type="fiat"\nanchor_asset="USD"`,
+    );
+    expect(rules(lint(source))).not.toContain('currencies/anchored-fiat-needs-transfer-server');
+  });
+
+  it('ignores non-fiat anchored assets without a transfer server', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="BTC"\nissuer="${ACCOUNT_A}"\nis_unlimited=true\nis_asset_anchored=true\nanchor_asset_type="crypto"\nanchor_asset="BTC"`,
+    );
+    expect(rules(lint(source))).not.toContain('currencies/anchored-fiat-needs-transfer-server');
+  });
+
+  it('flags regulated = true on a Soroban contract token', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="TKN"\ncontract="${CONTRACT_A}"\nis_unlimited=true\nregulated=true\napproval_server="https://api.example.com/approve"`,
+    );
+    const [d] = find(lint(source), 'currencies/regulated-invalid-target');
+    expect(d?.severity).toBe('error');
+    expect(d?.message).toContain('contract');
+    expect(d?.path).toBe('CURRENCIES[0].regulated');
+    expect(d?.position?.line).toBe(7);
+    expect(d?.helpUri).toBeTruthy();
+    expect(d?.suggestion).toBeTruthy();
+  });
+
+  it('flags regulated = true on the native XLM asset', () => {
+    const source = withValidBase('[[CURRENCIES]]\ncode="native"\nregulated=true');
+    const [d] = find(lint(source), 'currencies/regulated-invalid-target');
+    expect(d?.severity).toBe('error');
+    expect(d?.message).toContain('native');
+    expect(d?.path).toBe('CURRENCIES[0].regulated');
+  });
+
+  it('flags regulated = true on bare XLM with no issuer', () => {
+    const source = withValidBase('[[CURRENCIES]]\ncode="XLM"\nregulated=true');
+    expect(find(lint(source), 'currencies/regulated-invalid-target')).toHaveLength(1);
+  });
+
+  it('accepts regulated = true on a classic issued asset', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="AAA"\nissuer="${ACCOUNT_A}"\nis_unlimited=true\nregulated=true\napproval_server="https://api.example.com/approve"`,
+    );
+    expect(rules(lint(source))).not.toContain('currencies/regulated-invalid-target');
+  });
+
+  it('stays silent on a fully compliant file', () => {
+    // valid.toml pairs every auth-requiring endpoint with WEB_AUTH_ENDPOINT,
+    // gives its transfer server currencies, and backs its anchored fiat with
+    // a transfer server.
+    const result = lint(fixture('valid.toml'), { domain: 'example.com' });
+    for (const rule of NEW_RULES) {
+      expect(rules(result)).not.toContain(rule);
+    }
+  });
+
+  it('registers every new rule so --list-rules and --off know it', () => {
+    const ids = allRules.map((r) => r.id);
+    for (const rule of NEW_RULES) {
+      expect(ids).toContain(rule);
+    }
+  });
+});
+
+describe('disposable email domains', () => {
+  /**
+   * Sets a `[DOCUMENTATION]` contact field on the otherwise valid base,
+   * dropping the base's own value first: TOML forbids duplicate keys, and a
+   * parse error would stop every semantic rule from running.
+   */
+  const withContact = (field: string, value: string): string => {
+    const base = withValidBase('')
+      .split('\n')
+      .filter((line) => !line.startsWith(`${field}=`))
+      .join('\n');
+    return `${base}\n${field}="${value}"\n`;
+  };
+
+  it('warns when ORG_SUPPORT_EMAIL uses a disposable domain', () => {
+    const result = lint(withContact('ORG_SUPPORT_EMAIL', 'help@mailinator.com'));
+    const [d] = find(result, 'documentation/disposable-email');
+    expect(d?.severity).toBe('warning');
+    expect(d?.message).toContain('mailinator.com');
+    expect(d?.path).toBe('DOCUMENTATION.ORG_SUPPORT_EMAIL');
+    expect(d?.position?.line).toBe(13);
+    expect(d?.helpUri).toBeTruthy();
+    expect(d?.suggestion).toContain('permanently maintained');
+    // Syntax is fine, so the validity rule must stay silent: one problem,
+    // one diagnostic.
+    expect(find(result, 'documentation/emails')).toEqual([]);
+  });
+
+  it('warns when ORG_OFFICIAL_EMAIL uses a disposable domain', () => {
+    // withValidBase already sets ORG_OFFICIAL_EMAIL, so swap the value rather
+    // than append a duplicate key (TOML would fail to parse).
+    const source = withContact('ORG_SUPPORT_EMAIL', 'support@example.com').replace(
+      'ORG_OFFICIAL_EMAIL="ops@example.com"',
+      'ORG_OFFICIAL_EMAIL="ceo@yopmail.com"',
+    );
+    const [d] = find(lint(source), 'documentation/disposable-email');
+    expect(d?.severity).toBe('warning');
+    expect(d?.message).toContain('yopmail.com');
+    expect(d?.path).toBe('DOCUMENTATION.ORG_OFFICIAL_EMAIL');
+  });
+
+  it('warns when a principal uses a disposable domain', () => {
+    const source = withValidBase('[[PRINCIPALS]]\nname="Jane"\nemail="jane@guerrillamail.com"');
+    const [d] = find(lint(source), 'principals/disposable-email');
+    expect(d?.severity).toBe('warning');
+    expect(d?.message).toContain('guerrillamail.com');
+    expect(d?.path).toBe('PRINCIPALS[0].email');
+    expect(d?.position?.line).toBe(5);
+    expect(d?.suggestion).toContain('permanently maintained');
+  });
+
+  it('flags a disposable domain regardless of case or subdomain alias', () => {
+    const upper = lint(withContact('ORG_SUPPORT_EMAIL', 'User@MAILINATOR.COM'));
+    expect(find(upper, 'documentation/disposable-email')).toHaveLength(1);
+
+    const alias = withValidBase('[[PRINCIPALS]]\nname="Jane"\nemail="jane@west.us.yopmail.com"');
+    expect(find(lint(alias), 'principals/disposable-email')).toHaveLength(1);
+  });
+
+  it('stays silent for ordinary company domains', () => {
+    const result = lint(withContact('ORG_SUPPORT_EMAIL', 'support@example.com'), {
+      domain: 'example.com',
+    });
+    expect(rules(result)).not.toContain('documentation/disposable-email');
+    expect(rules(result)).not.toContain('principals/disposable-email');
+
+    const clean = lint(fixture('valid.toml'), { domain: 'example.com' });
+    expect(rules(clean)).not.toContain('documentation/disposable-email');
+    expect(rules(clean)).not.toContain('principals/disposable-email');
+  });
+
+  it('leaves a malformed address to the validity rule instead of doubling up', () => {
+    const result = lint(withContact('ORG_SUPPORT_EMAIL', 'not-an-email'));
+    expect(find(result, 'documentation/emails')).toHaveLength(1);
+    expect(find(result, 'documentation/disposable-email')).toEqual([]);
+  });
+
+  it('can be switched off by rule id', () => {
+    const result = lint(withContact('ORG_SUPPORT_EMAIL', 'help@mailinator.com'), {
+      rules: { 'documentation/disposable-email': 'off' },
+    });
+    expect(find(result, 'documentation/disposable-email')).toEqual([]);
+  });
+
+  it('registers both rules so --list-rules and --off know them', () => {
+    const ids = allRules.map((r) => r.id);
+    expect(ids).toContain('documentation/disposable-email');
+    expect(ids).toContain('principals/disposable-email');
+  });
+});
+
 describe('rule configuration', () => {
   it('disables a rule with off', () => {
     const result = lint(fixture('broken.toml'), { rules: { 'general/version': 'off' } });
@@ -364,7 +689,8 @@ describe('rule registry', () => {
   it('gives every rule a description and a namespaced id', () => {
     for (const rule of allRules) {
       expect(rule.description.length).toBeGreaterThan(0);
-      expect(rule.id).toMatch(/^[a-z]+\/[a-z0-9-]+$/);
+      // Categories are lowercase; digits are allowed so `sep38/...` matches.
+      expect(rule.id).toMatch(/^[a-z][a-z0-9]*\/[a-z0-9-]+$/);
     }
   });
 
@@ -379,5 +705,149 @@ describe('rule registry', () => {
     ].join('\n');
     const result = lint(hostile);
     expect(find(result, 'internal/rule-error')).toEqual([]);
+  });
+});
+
+describe('CST-backed parsing (#29)', () => {
+  it('produces identical diagnostics with and without comments', () => {
+    const plain = [
+      'VERSION="2.7.0"',
+      'NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"',
+      'TRANSFER_SERVER="http://api.example.com/sep6"',
+    ].join('\n');
+    const commented = [
+      '# The spec version this file targets.',
+      'VERSION="2.7.0"   # keep in step with the app',
+      '',
+      '# The network this anchor serves.',
+      'NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"',
+      'TRANSFER_SERVER="http://api.example.com/sep6" # not https',
+    ].join('\n');
+
+    const plainResult = lint(plain);
+    const commentedResult = lint(commented);
+    expect(commentedResult.diagnostics.map((d) => d.rule)).toEqual(
+      plainResult.diagnostics.map((d) => d.rule),
+    );
+    expect(commentedResult.parsed).toEqual(plainResult.parsed);
+  });
+
+  it('reports the same positioned syntax error as the previous parser', () => {
+    const result = lint('VERSION="1.0.0"\nthis is not toml\n');
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.rule).toBe('file/parse');
+    expect(result.diagnostics[0]?.position?.line).toBe(2);
+    expect(result.parsed).toBeUndefined();
+  });
+
+  it('keeps the parsed document shape for every TOML construct', () => {
+    const account = 'GC7T6T56DX23PT7Q6WGCTIJT5O6TP6SJ47RP73JCA3ISLVCCVMGHNSDI';
+    const source = [
+      'VERSION = "2.7.0"',
+      "HORIZON_URL = 'https://horizon.example.com'",
+      `SIGNING_KEY = "${ACCOUNT_A}"`,
+      'CHECKPOINT = 1979-05-27T07:32:00Z',
+      'RATIO = 1.5',
+      'ENABLED = true',
+      `ACCOUNTS = ["${account}"]`,
+      'EXTRA = { nested = "inline" }',
+      'dotted.key = "value"',
+    ].join('\n');
+
+    const result = lint(source);
+    expect(find(result, 'file/parse')).toEqual([]);
+    expect(result.parsed?.VERSION).toBe('2.7.0');
+    expect(result.parsed?.HORIZON_URL).toBe('https://horizon.example.com');
+    expect(result.parsed?.ENABLED).toBe(true);
+    expect(result.parsed?.EXTRA).toEqual({ nested: 'inline' });
+    expect(result.parsed?.dotted).toEqual({ key: 'value' });
+  });
+
+  it('rejects a duplicate key the way TOML requires', () => {
+    const result = lint('VERSION="1.0.0"\nVERSION="2.0.0"\n');
+    expect(result.diagnostics[0]?.rule).toBe('file/parse');
+    expect(result.diagnostics[0]?.position?.line).toBe(2);
+  });
+});
+
+describe('testnet contract IDs on Mainnet (#45)', () => {
+  const RULE = 'soroban/testnet-contract-on-mainnet';
+  const TESTNET_NATIVE_SAC = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+  const TESTNET_USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
+  const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
+
+  /** The valid base, but pointing at a different network. */
+  const onTestnet = (body: string): string =>
+    withValidBase(body).replace(
+      '"Public Global Stellar Network ; September 2015"',
+      `"${TESTNET_PASSPHRASE}"`,
+    );
+
+  const nativeCurrency = withValidBase(
+    `[[CURRENCIES]]\ncode="XLMX"\ncontract="${TESTNET_NATIVE_SAC}"\nis_unlimited=true`,
+  );
+
+  it('flags the Testnet native SAC in a Mainnet [[CURRENCIES]] entry', () => {
+    const [d] = find(lint(nativeCurrency), RULE);
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('CURRENCIES[0].contract');
+    expect(d?.position?.line).toBe(5);
+    expect(d?.message).toContain('Stellar Testnet');
+    expect(d?.message).toContain(TESTNET_NATIVE_SAC);
+    expect(d?.helpUri).toBeTruthy();
+    expect(d?.suggestion).toContain('Mainnet');
+  });
+
+  it('flags the Testnet USDC SAC too', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="USDC"\ncontract="${TESTNET_USDC_SAC}"\nis_unlimited=true`,
+    );
+    expect(find(lint(source), RULE)).toHaveLength(1);
+  });
+
+  it('flags a Testnet contract in WEB_AUTH_CONTRACT_ID', () => {
+    const source = withValidBase(`WEB_AUTH_CONTRACT_ID="${TESTNET_NATIVE_SAC}"`);
+    const [d] = find(lint(source), RULE);
+    expect(d?.severity).toBe('error');
+    expect(d?.path).toBe('WEB_AUTH_CONTRACT_ID');
+    expect(d?.position?.line).toBe(3);
+  });
+
+  it('reports every Testnet contract in the file, not just the first', () => {
+    const source = withValidBase(
+      `WEB_AUTH_CONTRACT_ID="${TESTNET_NATIVE_SAC}"\n[[CURRENCIES]]\ncode="USDC"\ncontract="${TESTNET_USDC_SAC}"\nis_unlimited=true`,
+    );
+    expect(find(lint(source), RULE)).toHaveLength(2);
+  });
+
+  it('stays silent on a Testnet file naming a Testnet contract', () => {
+    const result = lint(
+      onTestnet(`[[CURRENCIES]]\ncode="XLMX"\ncontract="${TESTNET_NATIVE_SAC}"\nis_unlimited=true`),
+    );
+    expect(find(result, RULE)).toEqual([]);
+  });
+
+  it('stays silent on a Mainnet contract', () => {
+    const source = withValidBase(
+      `[[CURRENCIES]]\ncode="AAA"\ncontract="${CONTRACT_A}"\nis_unlimited=true`,
+    );
+    expect(find(lint(source), RULE)).toEqual([]);
+  });
+
+  it('only gates on the Public passphrase, not on any non-Testnet one', () => {
+    const source = onTestnet(nativeCurrency).replace(
+      `"${TESTNET_PASSPHRASE}"`,
+      '"My Private Chain ; 2026"',
+    );
+    expect(find(lint(source), RULE)).toEqual([]);
+  });
+
+  it('is switched off by rule id', () => {
+    const result = lint(nativeCurrency, { rules: { [RULE]: 'off' } });
+    expect(find(result, RULE)).toEqual([]);
+  });
+
+  it('registers the rule so --list-rules and --off know it', () => {
+    expect(allRules.map((r) => r.id)).toContain(RULE);
   });
 });
