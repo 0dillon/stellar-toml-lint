@@ -7,6 +7,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `--format-file` rewrites a `stellar.toml` in place into a canonical layout: SEP-1 field order,
+  sections in spec order, single spaces around `=`, one blank line between sections, and consistent
+  quoting. Comments and string contents are preserved. The rewrite is idempotent, is proven not to
+  change the parsed document before it is written, and leaves a file that does not parse byte-for-byte
+  untouched with a positioned error. Also exported as `formatToml()`.
+
 ## [0.1.0]
 
 Initial release.

@@ -10,6 +10,8 @@
  * ```
  */
 export { lint, lintDomain } from './lint.js';
+export { formatToml } from './format-file.js';
+export type { FormatResult } from './format-file.js';
 export { allRules, ruleIds } from './rules/index.js';
 export { formatText, formatJson, formatSarif, formatGithub } from './reporters.js';
 export type { TextReporterOptions } from './reporters.js';

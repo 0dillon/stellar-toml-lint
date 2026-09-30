@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -124,5 +126,84 @@ describe('cli', () => {
     const { stdout } = await cli([fixture('broken.toml'), '--quiet', '-f', 'json']);
     const severities = JSON.parse(stdout).diagnostics.map((d: { severity: string }) => d.severity);
     expect(new Set(severities)).toEqual(new Set(['error']));
+  });
+});
+
+/** Writes a scratch file, runs a callback, then removes the scratch directory. */
+async function withScratchFile(
+  source: string,
+  run: (path: string) => Promise<{ code: number; stdout: string; stderr: string }>,
+): Promise<{ code: number; stdout: string; stderr: string; after: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'stellar-toml-lint-'));
+  const path = join(dir, 'stellar.toml');
+  await writeFile(path, source, 'utf8');
+  const result = await run(path);
+  const after = await readFile(path, 'utf8');
+  return { ...result, after };
+}
+
+/** Runs the CLI with something on stdin, for the `-` path. */
+function cliWithStdin(
+  args: string[],
+  input: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('node', [CLI, ...args], { env: { ...process.env, NO_COLOR: '1' } });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk));
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+describe('cli --format-file', () => {
+  it('rewrites a file into SEP-1 order', async () => {
+    const source = 'ACCOUNTS = ["GABC"]\nVERSION = "2.0.0"\n';
+    const { code, stdout, after } = await withScratchFile(source, (path) =>
+      cli(['--format-file', path]),
+    );
+    expect(code).toBe(0);
+    expect(stdout).toContain('Formatted');
+    expect(after).toBe('VERSION = "2.0.0"\nACCOUNTS = ["GABC"]\n');
+  });
+
+  it('reports an already-canonical file as unchanged', async () => {
+    const source = 'VERSION = "2.0.0"\nACCOUNTS = ["GABC"]\n';
+    const { code, stdout, after } = await withScratchFile(source, (path) =>
+      cli(['--format-file', path]),
+    );
+    expect(code).toBe(0);
+    expect(stdout).toContain('Unchanged');
+    expect(after).toBe(source);
+  });
+
+  it('leaves invalid TOML untouched and exits 2', async () => {
+    const source = 'VERSION = \n# broken on purpose\n';
+    const { code, stderr, after } = await withScratchFile(source, (path) =>
+      cli(['--format-file', path]),
+    );
+    expect(code).toBe(2);
+    expect(stderr).toContain('Invalid TOML');
+    expect(stderr).toContain('left untouched');
+    expect(after).toBe(source);
+  });
+
+  it('formats stdin onto stdout', async () => {
+    const { code, stdout } = await cliWithStdin(['--format-file', '-'], 'VERSION = "1"\n');
+    expect(code).toBe(0);
+    expect(stdout).toBe('VERSION = "1"\n');
+  });
+
+  it('rejects --domain, which has no file to rewrite', async () => {
+    const { code, stderr } = await cli(['--format-file', '--domain', 'example.com']);
+    expect(code).toBe(2);
+    expect(stderr).toContain('--domain');
+  });
+
+  it('is mentioned in --help', async () => {
+    const { stdout } = await cli(['--help']);
+    expect(stdout).toContain('--format-file');
   });
 });

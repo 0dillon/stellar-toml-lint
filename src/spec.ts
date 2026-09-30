@@ -32,29 +32,38 @@ export const HTTPS_ENDPOINT_FIELDS = [
 /** Global fields holding a `G...` account ID. */
 export const ACCOUNT_ID_FIELDS = ['SIGNING_KEY', 'URI_REQUEST_SIGNING_KEY'] as const;
 
-/** Fields SEP-1 marks deprecated, with the SEP that replaced them. */
-export const DEPRECATED_FIELDS: Record<string, string> = {
-  AUTH_SERVER: 'SEP-3 (Compliance Protocol) is deprecated; SEP-10/SEP-12 replace it',
-};
-
-/** Every field SEP-1 defines at the top level of the document. */
-export const KNOWN_GLOBAL_FIELDS = new Set<string>([
+/**
+ * Every global field, in the order SEP-1's "General Information" table lists
+ * them. The order matters to `--format-file`, which emits fields in spec order
+ * so two anchors' files line up when compared side by side.
+ */
+export const GLOBAL_FIELDS = [
   'VERSION',
   'NETWORK_PASSPHRASE',
+  'FEDERATION_SERVER',
+  'AUTH_SERVER',
+  'TRANSFER_SERVER',
+  'TRANSFER_SERVER_SEP0024',
+  'KYC_SERVER',
+  'WEB_AUTH_ENDPOINT',
+  'WEB_AUTH_FOR_CONTRACTS_ENDPOINT',
+  'WEB_AUTH_CONTRACT_ID',
+  'SIGNING_KEY',
   'HORIZON_URL',
   'ACCOUNTS',
-  'WEB_AUTH_CONTRACT_ID',
-  ...HTTPS_ENDPOINT_FIELDS,
-  ...ACCOUNT_ID_FIELDS,
-  // Tables, handled by their own rule sets.
-  'DOCUMENTATION',
-  'PRINCIPALS',
-  'CURRENCIES',
-  'VALIDATORS',
-]);
+  'URI_REQUEST_SIGNING_KEY',
+  'DIRECT_PAYMENT_SERVER',
+  'ANCHOR_QUOTE_SERVER',
+] as const;
 
-/** Every field SEP-1 defines in `[DOCUMENTATION]`. */
-export const KNOWN_DOCUMENTATION_FIELDS = new Set<string>([
+/**
+ * SEP-1's tables and array-of-tables, in spec order. Sections outside this
+ * list sort after all of them, keeping their original relative order.
+ */
+export const TABLE_ORDER = ['DOCUMENTATION', 'PRINCIPALS', 'CURRENCIES', 'VALIDATORS'] as const;
+
+/** `[DOCUMENTATION]` fields, in spec order. */
+export const DOCUMENTATION_FIELDS = [
   'ORG_NAME',
   'ORG_DBA',
   'ORG_URL',
@@ -72,10 +81,10 @@ export const KNOWN_DOCUMENTATION_FIELDS = new Set<string>([
   'ORG_LICENSING_AUTHORITY',
   'ORG_LICENSE_TYPE',
   'ORG_LICENSE_NUMBER',
-]);
+] as const;
 
-/** Every field SEP-1 defines in a `[[PRINCIPALS]]` entry. */
-export const KNOWN_PRINCIPAL_FIELDS = new Set<string>([
+/** `[[PRINCIPALS]]` fields, in spec order. */
+export const PRINCIPAL_FIELDS = [
   'name',
   'email',
   'keybase',
@@ -84,10 +93,10 @@ export const KNOWN_PRINCIPAL_FIELDS = new Set<string>([
   'github',
   'id_photo_hash',
   'verification_photo_hash',
-]);
+] as const;
 
-/** Every field SEP-1 defines in a `[[CURRENCIES]]` entry. */
-export const KNOWN_CURRENCY_FIELDS = new Set<string>([
+/** `[[CURRENCIES]]` fields, in spec order. */
+export const CURRENCY_FIELDS = [
   'code',
   'issuer',
   'contract',
@@ -113,16 +122,37 @@ export const KNOWN_CURRENCY_FIELDS = new Set<string>([
   'approval_server',
   'approval_criteria',
   'toml',
+] as const;
+
+/** `[[VALIDATORS]]` fields, in spec order. */
+export const VALIDATOR_FIELDS = ['ALIAS', 'DISPLAY_NAME', 'PUBLIC_KEY', 'HOST', 'HISTORY'] as const;
+
+/** Fields SEP-1 marks deprecated, with the SEP that replaced them. */
+export const DEPRECATED_FIELDS: Record<string, string> = {
+  AUTH_SERVER: 'SEP-3 (Compliance Protocol) is deprecated; SEP-10/SEP-12 replace it',
+};
+
+/** Every field SEP-1 defines at the top level of the document. */
+export const KNOWN_GLOBAL_FIELDS = new Set<string>([
+  ...GLOBAL_FIELDS,
+  // Tables, handled by their own rule sets.
+  'DOCUMENTATION',
+  'PRINCIPALS',
+  'CURRENCIES',
+  'VALIDATORS',
 ]);
 
+/** Every field SEP-1 defines in `[DOCUMENTATION]`. */
+export const KNOWN_DOCUMENTATION_FIELDS = new Set<string>(DOCUMENTATION_FIELDS);
+
+/** Every field SEP-1 defines in a `[[PRINCIPALS]]` entry. */
+export const KNOWN_PRINCIPAL_FIELDS = new Set<string>(PRINCIPAL_FIELDS);
+
+/** Every field SEP-1 defines in a `[[CURRENCIES]]` entry. */
+export const KNOWN_CURRENCY_FIELDS = new Set<string>(CURRENCY_FIELDS);
+
 /** Every field SEP-1 defines in a `[[VALIDATORS]]` entry. */
-export const KNOWN_VALIDATOR_FIELDS = new Set<string>([
-  'ALIAS',
-  'DISPLAY_NAME',
-  'PUBLIC_KEY',
-  'HOST',
-  'HISTORY',
-]);
+export const KNOWN_VALIDATOR_FIELDS = new Set<string>(VALIDATOR_FIELDS);
 
 /** Permitted values of `[[CURRENCIES]].status`. */
 export const CURRENCY_STATUSES = ['live', 'dead', 'test', 'private'] as const;

@@ -71,6 +71,9 @@ stellar-toml-lint public/.well-known/stellar.toml --domain example.com
 
 # Read from stdin
 cat stellar.toml | stellar-toml-lint -
+
+# Rewrite a file into canonical SEP-1 layout (comments kept)
+stellar-toml-lint --format-file public/.well-known/stellar.toml
 ```
 
 ### Options
@@ -79,6 +82,7 @@ cat stellar.toml | stellar-toml-lint -
 | -------------------- | ---------------------------------------------------------------- |
 | `-d, --domain <d>`   | Serving domain. Enables CORS, content-type, and `ORG_URL` checks |
 | `-f, --format <fmt>` | `text` (default), `json`, `sarif`, `github`                      |
+| `--format-file`      | Rewrite files in place in canonical SEP-1 layout                 |
 | `--strict`           | Treat warnings as errors                                         |
 | `--max-warnings <n>` | Fail if warnings exceed `n`                                      |
 | `--off <rule>`       | Disable a rule (repeatable)                                      |
@@ -87,9 +91,44 @@ cat stellar.toml | stellar-toml-lint -
 | `-q, --quiet`        | Show errors only                                                 |
 | `--show-help-urls`   | Print the spec link for each finding                             |
 | `--list-rules`       | Print every rule and exit                                        |
-| `--no-suggestions`   | Hide diagnostic suggestions in the output |
+| `--no-suggestions`   | Hide diagnostic suggestions in the output                        |
 
 Exit codes: **0** no errors, **1** problems found, **2** bad usage or I/O failure.
+
+## Formatting
+
+`--format-file` rewrites a file into a canonical layout, so two anchors' files line up when you
+compare them and a pre-commit hook has something deterministic to enforce. It is a separate mode
+from `--format`, which only selects the reporter for lint output.
+
+```console
+$ stellar-toml-lint --format-file stellar.toml
+Formatted stellar.toml
+```
+
+What changes: fields are ordered as SEP-1's tables list them, sections in spec order, `=` gets
+single spaces around it, runs of blank lines collapse, single-quoted strings become basic strings,
+and quoted keys that could be bare keys lose their quotes.
+
+What does not: comments stay where you wrote them (a comment travels with the construct that
+follows it), string contents are never edited, and the line breaks inside a multi-line array or
+`"""` block are left exactly as they are.
+
+Three guarantees, each covered by the test suite:
+
+- **Idempotent** — formatting an already-formatted file reports `Unchanged` and writes nothing.
+- **Round-trips** — the output is re-parsed and compared to the input's document; if they differ,
+  the formatter refuses rather than hand back a file it has silently changed.
+- **Invalid TOML is never touched** — a file that does not parse exits `2` with a positioned error
+  and is left byte-for-byte alone.
+
+```ts
+import { formatToml } from 'stellar-toml-lint';
+
+const result = formatToml(source);
+if (result.ok) await writeFile(path, result.output);
+else console.error(result.error);
+```
 
 ## In CI
 
@@ -154,7 +193,7 @@ while looking perfectly fine to `curl`.
 ## Programmatic API
 
 ```ts
-import { lint, lintDomain, formatText } from 'stellar-toml-lint';
+import { lint, lintDomain, formatText, formatToml } from 'stellar-toml-lint';
 import { readFile } from 'node:fs/promises';
 
 const result = lint(await readFile('stellar.toml', 'utf8'), {

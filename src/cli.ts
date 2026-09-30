@@ -6,12 +6,14 @@
  * set is small and stable, and a linter that anchors run in CI benefits from a
  * dependency tree small enough to audit by eye.
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import process from 'node:process';
+import { formatToml } from './format-file.js';
 import { lint, lintDomain } from './lint.js';
 import { formatGithub, formatJson, formatSarif, formatText } from './reporters.js';
 import { allRules } from './rules/index.js';
+import type { FormatResult } from './format-file.js';
 import type { LintResult, RuleOverrides, Severity } from './types.js';
 
 const VERSION = '0.1.0';
@@ -24,6 +26,7 @@ interface Cli {
   paths: string[];
   domain?: string;
   format: Format;
+  formatFile: boolean;
   strict: boolean;
   color?: boolean;
   quiet: boolean;
@@ -40,11 +43,14 @@ USAGE
   stellar-toml-lint [file...]            Lint local files (default: ./stellar.toml)
   stellar-toml-lint --domain <domain>    Fetch and lint https://<domain>/.well-known/stellar.toml
   cat stellar.toml | stellar-toml-lint - Lint stdin
+  stellar-toml-lint --format-file <file> Rewrite the file in canonical SEP-1 layout
 
 OPTIONS
   -d, --domain <domain>   Domain serving the file. Enables CORS, content-type and
                           ORG_URL same-domain checks. Fetches unless files are given.
   -f, --format <fmt>      text (default), json, sarif, or github
+      --format-file       Rewrite files in place: SEP-1 field order, consistent quoting,
+                          comments preserved. Distinct from --format (a reporter).
       --strict            Treat warnings as errors
       --max-warnings <n>  Fail if warnings exceed n
       --off <rule>        Disable a rule (repeatable)
@@ -77,6 +83,8 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${message(error)}\n\nRun with --help for usage.\n`);
     return 2;
   }
+
+  if (cli.formatFile) return formatFiles(cli);
 
   const color = cli.color ?? shouldUseColor();
   const results: { name: string; result: LintResult }[] = [];
@@ -115,6 +123,57 @@ async function main(argv: string[]): Promise<number> {
   }
 
   return verdict(results, cli) ? 0 : 1;
+}
+
+/**
+ * `--format-file` mode: rewrite each file in place and report what happened.
+ *
+ * A file that does not parse is never written to — the whole point of the
+ * round-trip guarantee is that a broken or half-saved file survives a
+ * formatting hook untouched — and it exits 2, the CLI's I/O failure code.
+ */
+async function formatFiles(cli: Cli): Promise<number> {
+  if (cli.domain) {
+    process.stderr.write(
+      '--format-file rewrites local files, so it cannot be combined with --domain.\n',
+    );
+    return 2;
+  }
+
+  const paths = cli.paths.length > 0 ? cli.paths : [DEFAULT_PATH];
+  let failed = false;
+
+  for (const path of paths) {
+    try {
+      const source = path === '-' ? await readStdin() : await readFile(path, 'utf8');
+      const result = formatToml(source);
+
+      if (!result.ok) {
+        process.stderr.write(formatFailure(path === '-' ? 'stdin' : path, result));
+        failed = true;
+        continue;
+      }
+
+      if (path === '-') {
+        process.stdout.write(result.output);
+        continue;
+      }
+
+      if (result.changed) await writeFile(path, result.output, 'utf8');
+      process.stdout.write(`${result.changed ? 'Formatted' : 'Unchanged'} ${path}\n`);
+    } catch (error) {
+      process.stderr.write(`${message(error)}\n`);
+      failed = true;
+    }
+  }
+
+  return failed ? 2 : 0;
+}
+
+function formatFailure(name: string, result: Extract<FormatResult, { ok: false }>): string {
+  const at =
+    result.line === undefined ? '' : ` at line ${result.line}, column ${result.column ?? 1}`;
+  return `${name}${at}: ${result.error}\n`;
 }
 
 function render(result: LintResult, name: string, cli: Cli, color: boolean): string {
@@ -157,6 +216,7 @@ function parseArgs(argv: string[]): Cli | 'handled' {
   const cli: Cli = {
     paths: [],
     format: 'text',
+    formatFile: false,
     strict: false,
     quiet: false,
     showHelp: false,
@@ -184,6 +244,10 @@ function parseArgs(argv: string[]): Cli | 'handled' {
       case '-d':
       case '--domain':
         cli.domain = requireValue(argv, ++i, arg);
+        break;
+
+      case '--format-file':
+        cli.formatFile = true;
         break;
 
       case '-f':

@@ -191,7 +191,7 @@ export async function lintDomain(
 }
 
 /** Converts a `smol-toml` parse failure into a positioned diagnostic. */
-function parseDiagnostic(error: unknown, source: string): Diagnostic {
+export function parseDiagnostic(error: unknown, source: string): Diagnostic {
   const position =
     error instanceof TomlError
       ? { line: error.line, column: error.column }
