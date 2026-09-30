@@ -49,6 +49,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matching Horizon's `core_latest_ledger`, and the archive checkpoint hash against the Horizon
   ledger hash for the same sequence — so a stalled or rebuilt-out-of-sync archive is caught before
   a relying peer or wallet falls behind (#86).
+- `history/bucket-download-failed`, `history/bucket-hash-mismatch`, and
+  `history/bucket-xdr-corrupted` (all errors) under `--check-network --verify-buckets`: a sample of
+  the `currentBuckets` each validator `HISTORY` archive declares is downloaded from the
+  content-addressed `bucket/xx/yy/zz/bucket-<sha256>.xdr.gz` tree, gunzipped, verified against the
+  SHA-256 its file name encodes, and decoded as a stream of XDR `BucketEntry` values — so a
+  truncated, altered, or bit-rotted bucket that still leaves the HAS intact is caught before a
+  catching-up node crashes on it (#87).
 
 - `network/image-unreachable`, `network/image-cors`, `network/image-content-type`, and
   `network/image-max-size` (all warnings) under `--domain`: the branding images wallets actually

@@ -33,6 +33,7 @@ import { overlayHandshakeRules } from '../overlay/handshake.js';
 import { cryptoAuditorRules } from '../overlay/crypto-auditor.js';
 import { historyPublishRules } from '../history/publish-validator.js';
 import { archiveDiffRules } from '../history/archive-diff.js';
+import { bucketAuditorRules } from '../history/bucket-auditor.js';
 import { quorumSolverRules } from '../validators/quorum-solver.js';
 import { quorumAuditRules } from '../validators/quorum.js';
 import { dnsIntegrityRules } from '../security/dns-integrity.js';
@@ -106,6 +107,7 @@ export const allRules: Rule[] = [
   ...cryptoAuditorRules,
   ...historyPublishRules,
   ...archiveDiffRules,
+  ...bucketAuditorRules,
   ...quorumSolverRules,
   ...quorumAuditRules,
   ...dnsIntegrityRules,
@@ -153,6 +155,7 @@ export {
   cryptoAuditorRules,
   historyPublishRules,
   archiveDiffRules,
+  bucketAuditorRules,
   quorumSolverRules,
   quorumAuditRules,
   dnsIntegrityRules,
