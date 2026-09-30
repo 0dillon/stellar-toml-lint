@@ -1936,20 +1936,28 @@ Measures response latency of a SEP-8 approval server over 5 sample requests and 
 - `sep8/approval-server-unresponsive` - more than 2 of 5 requests fail
 - `sep8/approval-server-high-latency` - average latency exceeds 3000ms SLA
 
-### Exporting configuration for `@stellar/anchor-tests`
+### SEP-12 KYC verification (`--verify-sep12`)
 
-Because `stellar-toml-lint` parses, validates, and indexes every field in your `stellar.toml`, it can automatically extract this metadata into a ready-to-run configuration file for the `@stellar/anchor-tests` CLI, closing the gap between local static linting and live integration testing.
+Runs the interactive SEP-12 customer verification suite against the anchor's
+`KYC_SERVER`. Requires `--check-network` (SEP-12 is a live protocol) and uses
+synthetic sandbox data only — the suite never sends real PII.
 
-Run the linter with `--export-anchor-tests` and pass the path to the JSON file you want to write (or `-` for stdout).
+    stellar-toml-lint public/.well-known/stellar.toml --check-network --verify-sep12
 
-```console
-$ stellar-toml-lint stellar.toml --export-anchor-tests anchor-config.json
-```
+Diagnostics emitted:
 
-If your configuration is missing endpoints required by certain test suites (e.g., `WEB_AUTH_ENDPOINT` for SEP-10 tests or `TRANSFER_SERVER_SEP0024` for SEP-24 tests), the linter will output actionable warnings to standard error so you know which integration tests will be skipped.
+| Rule | Severity | When it fires |
+|------|----------|---------------|
+| `sep12/invalid-customer-status` | error | `GET /customer` or `PUT /customer` returns a status other than `NEEDS_INFO`, `PROCESSING`, `ACCEPTED`, `REJECTED` |
+| `sep12/missing-required-kyc-fields` | warning | A `NEEDS_INFO` response omits one or more of `first_name`, `last_name`, `email_address` from its `fields` map |
+| `sep12/binary-upload-unsupported` | error | `PUT /customer/verification` rejects a well-formed multipart/form-data request carrying a binary identity document |
 
-You can also pipe the output directly into `anchor-tests`:
+The suite exercises three endpoints end to end:
 
-```console
-$ stellar-toml-lint stellar.toml --export-anchor-tests - | anchor-tests --sep-config -
-```
+1. `GET /customer?type=<type>` for each declared customer type
+2. `PUT /customer` with synthetic registration data
+3. `PUT /customer/verification` with a multipart body containing a binary PNG
+
+Servers that return 403 (SEP-10 auth required) or 404 (unknown customer) are
+treated as silence rather than a finding, matching the SEP-38 suite's
+behaviour for auth-gated anchors.
