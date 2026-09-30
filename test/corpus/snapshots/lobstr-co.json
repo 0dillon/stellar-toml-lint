@@ -1,0 +1,38 @@
+{
+  "url": "https://lobstr.co/.well-known/stellar.toml",
+  "domain": "lobstr.co",
+  "sourceSha256": "735fccf14196ac6526d71c1ed7ac2d48f477cc165a8ee69f7666603b55f567e4",
+  "ok": true,
+  "counts": {
+    "error": 0,
+    "warning": 1,
+    "info": 1
+  },
+  "diagnostics": [
+    {
+      "rule": "general/https-endpoints",
+      "category": "general",
+      "severity": "warning",
+      "message": "FEDERATION_SERVER has a trailing slash, which can produce double-slash request paths",
+      "path": "FEDERATION_SERVER",
+      "position": {
+        "line": 8,
+        "column": 1
+      },
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#general-information",
+      "suggestion": "Remove the trailing slash: https://lobstr.co/federation"
+    },
+    {
+      "rule": "validators/unknown-field",
+      "category": "validators",
+      "message": "VALIDATORS[2].TOKEN_LISTS is not a field defined by SEP-1",
+      "path": "VALIDATORS[2].TOKEN_LISTS",
+      "position": {
+        "line": 64,
+        "column": 1
+      },
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#validator-information",
+      "severity": "info"
+    }
+  ]
+}

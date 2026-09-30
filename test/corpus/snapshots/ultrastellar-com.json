@@ -1,0 +1,26 @@
+{
+  "url": "https://ultrastellar.com/.well-known/stellar.toml",
+  "domain": "ultrastellar.com",
+  "sourceSha256": "f719e09ecb61b51c93a6ac228eddc7b70cb6aec82e828fa6d955f906cf898b82",
+  "ok": true,
+  "counts": {
+    "error": 0,
+    "warning": 1,
+    "info": 0
+  },
+  "diagnostics": [
+    {
+      "rule": "documentation/recommended-fields",
+      "category": "documentation",
+      "message": "DOCUMENTATION.ORG_DESCRIPTION is missing, which weakens your listing case",
+      "path": "DOCUMENTATION.ORG_DESCRIPTION",
+      "position": {
+        "line": 9,
+        "column": 1
+      },
+      "helpUri": "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md#organization-documentation",
+      "suggestion": "Wallets and exchanges rank issuers by documentation completeness.",
+      "severity": "warning"
+    }
+  ]
+}

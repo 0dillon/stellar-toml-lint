@@ -267,6 +267,23 @@ type, size.
 
 Tune any rule with `--off`, `--warn`, or `--error`.
 
+## Regression corpus
+
+`npm run corpus` fetches a catalogue of real, published `stellar.toml` files and compares
+`lint()`'s output against the snapshots committed in
+[`test/corpus/snapshots/`](./test/corpus/snapshots). A rule that starts firing — or
+stops firing — on input its authors have never seen is printed as a reviewable diff:
+
+```sh
+npm run corpus            # exit 1 if the linter's behaviour changed
+npm run corpus:update     # accept the current output
+```
+
+A host that is down reports `unreachable` and the run still passes: a third party's
+downtime must not look like our regression. The catalogue stores URLs rather than
+content, so nothing is committed except what the linter said. A scheduled workflow runs
+it weekly; see [`test/corpus/README.md`](./test/corpus/README.md) for the details.
+
 ## Contributing
 
 New contributors are genuinely welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Issues labelled
