@@ -271,6 +271,7 @@ failure.
 | `--verify-sep30`            | Validate RECOVERY_SERVER /accounts endpoint and signer public keys (requires `--check-network`)                                                                                                             |
 | `--verify-sep38`            | Audit SEP-38 quote coverage, bid-ask spread, and quote expirations (requires `--check-network`)                                                                                                             |
 | `--crawl-peers`             | Discover validator peers with overlay `GET_PEERS` messages (requires `--check-network`)                                                                                                                     |
+| `--verify-buckets`          | Download a sample of each archive's `currentBuckets`, verify the SHA-256 of the decompressed stream, and decode the XDR `BucketEntry` stream (requires `--check-network`)                                   |
 | `--verify-overlay`          | Complete the overlay TCP handshake with each `[[VALIDATORS]]` HOST and check its network, node ID, and protocol version (requires `--check-network`)                                                        |
 | `--audit-quorum`            | Solve declared `[[VALIDATORS]]` quorum sets for split-brain risk and BFT; emits `validators/fragile-quorum-set` (warning) and `validators/quorum-intersection-failure` (error) (requires `--check-network`) |
 | `--verify-dnssec`           | Compare A/AAAA answers across Cloudflare, Google, and Quad9 DoH resolvers (requires `--check-network`)                                                                                                      |
@@ -1233,6 +1234,17 @@ for the same sequence. A lag over 128 ledgers emits `history/archive-lagging` (w
 512 emits it as an error, and a hash that disagrees with Horizon emits
 `history/archive-hash-mismatch` (error) — the signature of an archive rebuilt out of sync with the
 core ledger. An archive or Horizon endpoint that cannot be reached degrades to silence.
+
+**Bucket hash and XDR audit** (with `--check-network --verify-buckets`) — the HAS metadata checks
+confirm an archive publishes a state file, but never open the bucket objects it names. This audit
+downloads a sample of the `currentBuckets` each `HISTORY` archive declares, at the content-addressed
+`bucket/xx/yy/zz/bucket-<sha256>.xdr.gz` path, gunzips the stream, recomputes the SHA-256 of the
+decompressed bytes, and confirms the whole buffer decodes as a stream of XDR `BucketEntry` values. A
+bucket that cannot be fetched emits `history/bucket-download-failed` (error), one whose content hash
+disagrees with the hash its file name encodes emits `history/bucket-hash-mismatch` (error), and one
+whose gzip stream cannot be read or whose bytes are not valid XDR emits `history/bucket-xdr-corrupted`
+(error) — the corruption that otherwise crashes catchup after the HAS itself passed. Unreachable
+archives and HAS files with no `currentBuckets` degrade to silence.
 
 **Quorum intersection audit** (with `--check-network --audit-quorum`) — the quorum sets declared by
 `[[VALIDATORS]].QUORUM_SET` — or, when absent, the `[QUORUM_SET]` stanzas of each validator's

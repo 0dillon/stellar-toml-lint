@@ -226,6 +226,26 @@ export {
 } from './history/archive-diff.js';
 export type { ArchiveDiffOptions } from './history/archive-diff.js';
 export {
+  checkBucketIntegrity,
+  checkBucketAudit,
+  checkBucketHashes,
+  verifyBuckets,
+  bucketReferences,
+  bucketHashFromName,
+  bucketPathFor,
+  isBucketEntryStream,
+  sampleBuckets,
+  auditBucketFile,
+  bucketAuditorRules,
+  bucketAuditorRuleIds,
+  BUCKET_DOWNLOAD_FAILED_RULE,
+  BUCKET_HASH_MISMATCH_RULE,
+  BUCKET_XDR_CORRUPTED_RULE,
+  DEFAULT_BUCKET_SAMPLE_COUNT,
+  DEFAULT_MAX_BUCKET_BYTES,
+} from './history/bucket-auditor.js';
+export type { BucketAuditorOptions, BucketReference } from './history/bucket-auditor.js';
+export {
   checkQuorumIntersection,
   quorumSolverRules,
   quorumSolverRuleIds,

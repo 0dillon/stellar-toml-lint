@@ -71,6 +71,7 @@ import { verifySep30 } from './protocols/sep30.js';
 import { checkCollateralGovernance } from './security/collateral-governance.js';
 import { checkHistoryPublish } from './history/publish-validator.js';
 import { checkArchiveDiff } from './history/archive-diff.js';
+import { checkBucketIntegrity } from './history/bucket-auditor.js';
 import {
   auditQuorumSets,
   formatQuorumSummaryTable,
@@ -158,6 +159,7 @@ interface Cli {
   crawlPeers: boolean;
   verifyDnssec: boolean;
   verifyOverlay: boolean;
+  verifyBuckets: boolean;
   badgeSvg?: string;
   badgeJson?: string;
   exportApConfig?: boolean;
@@ -251,6 +253,9 @@ OPTIONS
       --verify-sep8       Simulate SEP-8 regulated asset compliance approval server interaction
       --verify-sep38      Audit SEP-38 quote coverage, bid-ask spread, and quote expirations
       --crawl-peers       Discover overlay peers with GET_PEERS and check connectivity
+      --verify-buckets    With --check-network: download a sample of the archive
+                          buckets a validator publishes, verify each against the
+                          SHA-256 in its name, and decode its XDR entries
       --verify-overlay    With --check-network: complete the overlay TCP handshake
                           with each [[VALIDATORS]] HOST and check its network,
                           node ID, and protocol version
@@ -413,6 +418,9 @@ async function main(argv: string[]): Promise<number> {
           const networkDiagnostics: Diagnostic[] = [
             ...(await checkHistoryPublish(domainResult.parsed, fetchImpl, { rules })),
             ...(await checkArchiveDiff(domainResult.parsed, fetchImpl, { rules })),
+            ...(cli.verifyBuckets
+              ? await checkBucketIntegrity(domainResult.parsed, fetchImpl, { rules })
+              : []),
             ...(cli.auditQuorum || cli.auditSecurity
               ? await auditQuorumSets(domainResult.parsed, fetchImpl, { rules })
               : []),
@@ -667,6 +675,9 @@ async function main(argv: string[]): Promise<number> {
                   : []),
                 ...(await checkHistoryPublish(fileResult.parsed, fetchImpl, { rules })),
                 ...(await checkArchiveDiff(fileResult.parsed, fetchImpl, { rules })),
+                ...(cli.verifyBuckets
+                  ? await checkBucketIntegrity(fileResult.parsed, fetchImpl, { rules })
+                  : []),
                 ...(cli.auditQuorum || cli.auditSecurity
                   ? await auditQuorumSets(fileResult.parsed, fetchImpl, { rules })
                   : []),
@@ -1154,6 +1165,7 @@ function parseArgs(argv: string[]): Cli | 'handled' {
     crawlPeers: false,
     verifyDnssec: false,
     verifyOverlay: false,
+    verifyBuckets: false,
     checkContracts: false,
     simulateSoroban: false,
     sorobanRentAudit: false,
@@ -1296,6 +1308,10 @@ function parseArgs(argv: string[]): Cli | 'handled' {
 
       case '--verify-overlay':
         cli.verifyOverlay = true;
+        break;
+
+      case '--verify-buckets':
+        cli.verifyBuckets = true;
         break;
 
       case '--verify-dnssec':
