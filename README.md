@@ -94,6 +94,9 @@ stellar-toml-lint public/.well-known/stellar.toml --domain example.com
 # Read from stdin
 cat stellar.toml | stellar-toml-lint -
 
+# Rewrite a file into canonical SEP-1 layout (comments kept)
+stellar-toml-lint --format-file public/.well-known/stellar.toml
+
 # Print version as JSON for toolchains and scripts
 stellar-toml-lint --version --format json
 ```
@@ -132,6 +135,7 @@ it was before.
 | -------------------- | ------------------------------------------------------------------------------- |
 | `-d, --domain <d>`   | Serving domain. Enables CORS, content-type, TLS, and `ORG_URL` checks           |
 | `-f, --format <fmt>` | `text` (default), `summary`, `json`, `sarif`, `github`, `junit`                 |
+| `--format-file`      | Rewrite files in place in canonical SEP-1 layout                                |
 | `--strict`           | Treat warnings as errors                                                        |
 | `--max-warnings <n>` | Fail if warnings exceed `n`                                                     |
 | `--check-network`    | Verify accounts, `HORIZON_URL`, `AUTH_SERVER`, and `ANCHOR_QUOTE_SERVER` online |
@@ -669,6 +673,41 @@ To build the browser bundles:
 
 ```bash
 npm run build:browser
+```
+
+## Formatting
+
+`--format-file` rewrites a file into a canonical layout, so two anchors' files line up when you
+compare them and a pre-commit hook has something deterministic to enforce. It is a separate mode
+from `--format`, which only selects the reporter for lint output.
+
+```console
+$ stellar-toml-lint --format-file stellar.toml
+Formatted stellar.toml
+```
+
+What changes: fields are ordered as SEP-1's tables list them, sections in spec order, `=` gets
+single spaces around it, runs of blank lines collapse, single-quoted strings become basic strings,
+and quoted keys that could be bare keys lose their quotes.
+
+What does not: comments stay where you wrote them (a comment travels with the construct that
+follows it), string contents are never edited, and the line breaks inside a multi-line array or
+`"""` block are left exactly as they are.
+
+Three guarantees, each covered by the test suite:
+
+- **Idempotent** — formatting an already-formatted file reports `Unchanged` and writes nothing.
+- **Round-trips** — the output is re-parsed and compared to the input's document; if they differ,
+  the formatter refuses rather than hand back a file it has silently changed.
+- **Invalid TOML is never touched** — a file that does not parse exits `2` with a positioned error
+  and is left byte-for-byte alone.
+
+```ts
+import { formatToml } from 'stellar-toml-lint';
+
+const result = formatToml(source);
+if (result.ok) await writeFile(path, result.output);
+else console.error(result.error);
 ```
 
 ## In CI
@@ -1691,6 +1730,23 @@ The playground is a standalone Vite + React + TypeScript application located in 
 - `src/components/QuorumVisualizer.tsx` — Interactive quorum DAG visualizer using Cytoscape.js
 - `src/components/LiveNetworkProbe.tsx` — Network connectivity tester
 - `src/components/FixActions.tsx` — Automated fix suggestions and application
+
+## Regression corpus
+
+`npm run corpus` fetches a catalogue of real, published `stellar.toml` files and compares
+`lint()`'s output against the snapshots committed in
+[`test/corpus/snapshots/`](./test/corpus/snapshots). A rule that starts firing — or stops firing —
+on input its authors have never seen is printed as a reviewable diff:
+
+```sh
+npm run corpus            # exit 1 if the linter's behaviour changed
+npm run corpus:update     # accept the current output
+```
+
+A host that is down reports `unreachable` and the run still passes: a third party's downtime must
+not look like our regression. The catalogue stores URLs rather than content, so nothing is
+committed except what the linter said. A scheduled workflow runs it weekly; see
+[`test/corpus/README.md`](./test/corpus/README.md) for the details.
 
 ## Contributing
 

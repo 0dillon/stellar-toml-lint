@@ -110,6 +110,8 @@ import {
 } from './codemod/migrate.js';
 import { applyFixes } from './fix.js';
 import type { Diagnostic, LintResult, RuleOverrides, Severity } from './types.js';
+import { formatToml } from './format-file.js';
+import type { FormatResult } from './format-file.js';
 
 const VERSION = '0.1.0';
 const DEFAULT_PATH = 'stellar.toml';
@@ -132,6 +134,7 @@ interface Cli {
   paths: string[];
   domain?: string;
   format: Format;
+  formatFile: boolean;
   healthCheck?: boolean;
   strict: boolean;
   watch?: boolean;
@@ -197,6 +200,7 @@ USAGE
                                          expanding it (or failing to)
   stellar-toml-lint --domain <domain>    Fetch and lint https://<domain>/.well-known/stellar.toml
   cat stellar.toml | stellar-toml-lint - Lint stdin
+  stellar-toml-lint --format-file <file> Rewrite the file in canonical SEP-1 layout
 
 OPTIONS
   -d, --domain <domain>   Domain serving the file. Enables CORS, content-type,
@@ -207,6 +211,9 @@ OPTIONS
                           html, checkstyle, markdown (for GitHub step
                           summaries), or pr-comment (for the aggregate
                           pull-request comment)
+      --format-file       Rewrite files in place: SEP-1 field order, consistent
+                          quoting, comments preserved. Distinct from --format
+                          (a reporter).
       --strict            Treat warnings as errors
       --max-warnings <n>  Fail if warnings exceed n
       --fail-on <sev>     Exit 1 when any diagnostic meets or exceeds <sev>:
@@ -372,6 +379,8 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${message(error)}\n\nRun with --help for usage.\n`);
     return 2;
   }
+
+  if (cli.formatFile) return formatFiles(cli);
 
   const color = cli.color ?? shouldUseColor();
 
@@ -1074,6 +1083,57 @@ async function expandInputs(inputs: string[]): Promise<string[]> {
   return [...new Set(paths)];
 }
 
+/**
+ * `--format-file` mode: rewrite each file in place and report what happened.
+ *
+ * A file that does not parse is never written to — the whole point of the
+ * round-trip guarantee is that a broken or half-saved file survives a
+ * formatting hook untouched — and it exits 2, the CLI's I/O failure code.
+ */
+async function formatFiles(cli: Cli): Promise<number> {
+  if (cli.domain) {
+    process.stderr.write(
+      '--format-file rewrites local files, so it cannot be combined with --domain.\n',
+    );
+    return 2;
+  }
+
+  const paths = cli.paths.length > 0 ? cli.paths : [DEFAULT_PATH];
+  let failed = false;
+
+  for (const path of paths) {
+    try {
+      const source = path === '-' ? await readStdin() : await readFile(path, 'utf8');
+      const result = formatToml(source);
+
+      if (!result.ok) {
+        process.stderr.write(formatFailure(path === '-' ? 'stdin' : path, result));
+        failed = true;
+        continue;
+      }
+
+      if (path === '-') {
+        process.stdout.write(result.output);
+        continue;
+      }
+
+      if (result.changed) await writeFile(path, result.output, 'utf8');
+      process.stdout.write(`${result.changed ? 'Formatted' : 'Unchanged'} ${path}\n`);
+    } catch (error) {
+      process.stderr.write(`${message(error)}\n`);
+      failed = true;
+    }
+  }
+
+  return failed ? 2 : 0;
+}
+
+function formatFailure(name: string, result: Extract<FormatResult, { ok: false }>): string {
+  const at =
+    result.line === undefined ? '' : ` at line ${result.line}, column ${result.column ?? 1}`;
+  return `${name}${at}: ${result.error}\n`;
+}
+
 function render(result: LintResult, name: string, cli: Cli, color: boolean): string {
   switch (cli.format) {
     case 'json':
@@ -1139,6 +1199,7 @@ function parseArgs(argv: string[]): Cli | 'handled' {
   const cli: Cli = {
     paths: [],
     format: 'text',
+    formatFile: false,
     strict: false,
     quiet: false,
     count: false,
@@ -1214,6 +1275,10 @@ function parseArgs(argv: string[]): Cli | 'handled' {
       case '-d':
       case '--domain':
         cli.domain = requireValue(argv, ++i, arg);
+        break;
+
+      case '--format-file':
+        cli.formatFile = true;
         break;
 
       case '-f':

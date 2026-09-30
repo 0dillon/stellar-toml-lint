@@ -9,6 +9,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `--format-file` rewrites a `stellar.toml` in place into a canonical layout: SEP-1 field order,
+  sections in spec order, single spaces around `=`, one blank line between sections, and consistent
+  quoting. Comments and string contents are preserved. The rewrite is idempotent, is proven not to
+  change the parsed document before it is written, and leaves a file that does not parse byte-for-byte
+  untouched with a positioned error. Also exported as `formatToml()`.
+- A regression corpus (`npm run corpus`): a catalogue of real, published `stellar.toml` files is
+  fetched, linted, and diffed against committed snapshots, so any change in the linter's behaviour on
+  real-world input shows up as a reviewable diff instead of as a surprise. Unreachable hosts are
+  reported without failing the run, and a scheduled workflow uploads the diff as an artifact. See
+  `test/corpus/README.md`.
 - A lossless, comment-preserving Concrete Syntax Tree parser (`src/cst/`) now backs parsing in
   `lint`, replacing the `smol-toml` call. Every token, trivia span, comment, quoting style, and
   whitespace run is retained, and serializing an unmodified tree reproduces the source
