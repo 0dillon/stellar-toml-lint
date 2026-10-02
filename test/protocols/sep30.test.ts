@@ -18,7 +18,6 @@ describe('SEP-30 recovery signer multi-party identity and transaction signing va
     ],
   };
 
-
   const validIdentityResponse = {
     identity: {
       signers: ['GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H'],
@@ -32,7 +31,6 @@ describe('SEP-30 recovery signer multi-party identity and transaction signing va
       ],
     },
   };
-
 
   it('passes cleanly when recovery server returns valid signers', async () => {
     const fetchImpl = (async (url: string | URL | Request) => {

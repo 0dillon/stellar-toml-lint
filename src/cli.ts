@@ -162,6 +162,7 @@ interface Cli {
   verifySep8?: boolean;
   verifySep38?: boolean;
   verifySep30?: boolean;
+  verifySep12?: boolean;
   crawlPeers: boolean;
   verifyDnssec: boolean;
   verifyOverlay: boolean;
@@ -1246,6 +1247,7 @@ function parseArgs(argv: string[]): Cli | 'handled' {
     followLinks: false,
     verifySep10: false,
     verifySep30: false,
+    verifySep12: false,
     verifySep38: false,
     crawlPeers: false,
     verifyDnssec: false,
