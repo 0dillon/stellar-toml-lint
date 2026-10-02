@@ -68,6 +68,7 @@ import { verifySep6Integration } from './protocols/sep6.js';
 import { verifySep31 } from './protocols/sep31.js';
 import { verifySep8 } from './protocols/sep8.js';
 import { verifySep38 } from './protocols/sep38.js';
+import { verifySep24 } from './protocols/sep24.js';
 import { verifySep12 } from './protocols/sep12.js';
 import { verifySep30 } from './protocols/sep30.js';
 import { checkCollateralGovernance } from './security/collateral-governance.js';
@@ -161,6 +162,8 @@ interface Cli {
   verifySep31?: boolean;
   verifySep8?: boolean;
   verifySep38?: boolean;
+  verifySep24?: boolean;
+  verifySep12?: boolean;
   verifySep30?: boolean;
   verifySep12?: boolean;
   crawlPeers: boolean;
@@ -263,6 +266,7 @@ OPTIONS
       --verify-sep31      Audit SEP-31 cross-border payment lifecycle and schema
       --verify-sep8       Simulate SEP-8 regulated asset compliance approval server interaction
       --verify-sep38      Audit SEP-38 quote coverage, bid-ask spread, and quote expirations
+      --verify-sep24      Audit SEP-24 hosted deposit/withdrawal flow against the transfer server
       --crawl-peers       Discover overlay peers with GET_PEERS and check connectivity
       --verify-buckets    With --check-network: download a sample of the archive
                           buckets a validator publishes, verify each against the
@@ -485,6 +489,9 @@ async function main(argv: string[]): Promise<number> {
             ...(cli.verifySep38
               ? await verifySep38(domainResult.parsed, fetchImpl, { rules })
               : []),
+            ...(cli.verifySep24
+              ? await verifySep24(domainResult.parsed, fetchImpl, { rules })
+              : []),
             ...(cli.crawlPeers && cli.mockFixtures === undefined
               ? await checkOverlayPeers(domainResult.parsed, { rules })
               : []),
@@ -661,6 +668,12 @@ async function main(argv: string[]): Promise<number> {
             if (cli.verifySep38 && cli.checkNetwork) {
               networkDiagnostics.push(
                 ...(await verifySep38(fileResult.parsed, fetchImpl, { rules })),
+              );
+            }
+
+            if (cli.verifySep24 && cli.checkNetwork) {
+              networkDiagnostics.push(
+                ...(await verifySep24(fileResult.parsed, fetchImpl, { rules })),
               );
             }
 
@@ -1246,6 +1259,8 @@ function parseArgs(argv: string[]): Cli | 'handled' {
     auditDiversity: false,
     followLinks: false,
     verifySep10: false,
+    verifySep38: false,
+    verifySep24: false,
     verifySep30: false,
     verifySep12: false,
     verifySep38: false,
@@ -1390,6 +1405,10 @@ function parseArgs(argv: string[]): Cli | 'handled' {
 
       case '--verify-sep38':
         cli.verifySep38 = true;
+        break;
+
+      case '--verify-sep24':
+        cli.verifySep24 = true;
         break;
 
       case '--verify-sep12':
