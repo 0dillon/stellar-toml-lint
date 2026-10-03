@@ -12,7 +12,7 @@ describe('documentation playground samples', () => {
     ]);
   });
 
-  it.each(['Minimal Issuer', 'SEP-24 Anchor', 'Validator Node'])(
+  it.each(['Minimal Issuer', 'SEP-24 Anchor', 'Validator Node'] as const)(
     '%s has no lint errors',
     (name) => {
       expect(lint(SAMPLES[name] ?? '').counts.error).toBe(0);

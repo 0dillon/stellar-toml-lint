@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { Account, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-base';
+import {
+  Account,
+  Keypair,
+  Networks,
+  Operation,
+  TimeoutInfinite,
+  TransactionBuilder,
+} from '@stellar/stellar-base';
 import {
   CHALLENGE_SUBMISSION_FAILED_RULE,
   EXPIRED_TIMEBOUNDS_RULE,
@@ -21,7 +28,8 @@ interface ChallengeOptions {
 
 /** Build and server-sign a SEP-10 challenge transaction. */
 function makeChallenge(server: Keypair, options: ChallengeOptions = {}): string {
-  const account = new Account(options.source ?? server.publicKey(), options.sequence ?? '0');
+  const sequence = (BigInt(options.sequence ?? '0') - 1n).toString();
+  const account = new Account(options.source ?? server.publicKey(), sequence);
   const builder = new TransactionBuilder(account, {
     networkPassphrase: PASSPHRASE,
     fee: '100',
@@ -32,6 +40,7 @@ function makeChallenge(server: Keypair, options: ChallengeOptions = {}): string 
       value: Buffer.from('nonce'),
     }),
   );
+  if (!options.timebounds) builder.setTimeout(TimeoutInfinite);
   const tx = builder.build();
   tx.sign(server);
   return tx.toXDR();
