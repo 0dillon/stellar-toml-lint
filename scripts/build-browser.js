@@ -202,7 +202,11 @@ async function buildBrowser() {
   console.log('  - stellar-toml-lint.worker.min.js & worker.js (Web Worker)');
 }
 
-buildBrowser().catch((error) => {
-  console.error('Browser build failed:', error);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  buildBrowser().catch((error) => {
+    console.error('Browser build failed:', error);
+    process.exit(1);
+  });
+}
+
+export { nodeShimPlugin };

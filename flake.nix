@@ -16,7 +16,7 @@
             src = self;
             doCheck = false;
             installFlags = [ "--ignore-scripts" ];
-npmDepsHash = "sha256-azk2Reaz38K73DElMyCiFpQISZtbt4PHZAoamdE4D/A=";
+            npmDepsHash = "sha256-WsElBxUaD5h5I5nEDhkSoz5QS9je+In8k9QCHZJ3gtI=";
             nativeBuildInputs = with pkgs; [
               nodejs_22
               python3
