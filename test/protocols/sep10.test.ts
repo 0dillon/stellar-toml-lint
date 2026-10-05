@@ -106,7 +106,7 @@ describe('verifySep10', () => {
   it('flags a challenge with a non-zero sequence number', async () => {
     const server = Keypair.random();
     const now = Math.floor(Date.now() / 1000);
-    const xdr = makeChallenge(server, { sequence: '0', timebounds: freshTimebounds() });
+    const xdr = makeChallenge(server, { sequence: '42', timebounds: freshTimebounds() });
     const token = makeJwt({ iss: HOME, sub: 'GCLIENT', iat: now, exp: now + 3600 });
 
     const diagnostics = await verifySep10(ENDPOINT, server.publicKey(), {

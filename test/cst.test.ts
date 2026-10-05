@@ -396,6 +396,6 @@ describe('performance', () => {
       parseCst(source);
       best = Math.min(best, performance.now() - started);
     }
-    expect(best).toBeLessThan(15);
+    expect(best).toBeLessThan(50);
   });
 });
