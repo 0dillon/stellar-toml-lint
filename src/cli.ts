@@ -165,7 +165,6 @@ interface Cli {
   verifySep24?: boolean;
   verifySep12?: boolean;
   verifySep30?: boolean;
-  verifySep12?: boolean;
   crawlPeers: boolean;
   verifyDnssec: boolean;
   verifyOverlay: boolean;
@@ -1063,15 +1062,18 @@ async function main(argv: string[]): Promise<number> {
     if (cli.exportAnchorTests && results.length > 0) {
       const firstResult = results[0]!.result;
       if (firstResult.parsed) {
-        const configObj = generateAnchorTestsConfig(firstResult.parsed as Record<string, unknown>, cli.domain);
-        const outJson = JSON.stringify(configObj, null, 2) + "\n";
+        const configObj = generateAnchorTestsConfig(
+          firstResult.parsed as Record<string, unknown>,
+          cli.domain,
+        );
+        const outJson = JSON.stringify(configObj, null, 2) + '\n';
         if (cli.exportAnchorTests === '-') {
           process.stdout.write(outJson);
         } else {
           await writeFile(cli.exportAnchorTests, outJson, 'utf8');
         }
       } else {
-        process.stderr.write("Cannot export anchor tests: TOML was not parsed successfully.\n");
+        process.stderr.write('Cannot export anchor tests: TOML was not parsed successfully.\n');
       }
     }
 
@@ -1263,7 +1265,6 @@ function parseArgs(argv: string[]): Cli | 'handled' {
     verifySep24: false,
     verifySep30: false,
     verifySep12: false,
-    verifySep38: false,
     crawlPeers: false,
     verifyDnssec: false,
     verifyOverlay: false,

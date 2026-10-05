@@ -6,10 +6,13 @@ export interface AnchorTestsConfig {
   [key: string]: unknown;
 }
 
-export function generateAnchorTestsConfig(doc: Record<string, unknown>, domain?: string): AnchorTestsConfig {
+export function generateAnchorTestsConfig(
+  doc: Record<string, unknown>,
+  domain?: string,
+): AnchorTestsConfig {
   const config: AnchorTestsConfig = {
     seps: [],
-    sepConfig: {}
+    sepConfig: {},
   };
 
   if (domain) {
@@ -25,11 +28,11 @@ export function generateAnchorTestsConfig(doc: Record<string, unknown>, domain?:
   if (doc.SIGNING_KEY) {
     config.SIGNING_KEY = doc.SIGNING_KEY;
   }
-  
+
   if (doc.WEB_AUTH_ENDPOINT) {
     config.WEB_AUTH_ENDPOINT = doc.WEB_AUTH_ENDPOINT;
   }
-  
+
   if (doc.TRANSFER_SERVER_SEP0024) {
     config.TRANSFER_SERVER_SEP0024 = doc.TRANSFER_SERVER_SEP0024;
   }
@@ -40,15 +43,17 @@ export function generateAnchorTestsConfig(doc: Record<string, unknown>, domain?:
 
   if (!doc.WEB_AUTH_ENDPOINT) {
     // eslint-disable-next-line no-console
-  console.warn("Warning: WEB_AUTH_ENDPOINT is missing. SEP-10 and other authenticated tests will be skipped.");
+    console.warn(
+      'Warning: WEB_AUTH_ENDPOINT is missing. SEP-10 and other authenticated tests will be skipped.',
+    );
   }
   if (!doc.SIGNING_KEY) {
     // eslint-disable-next-line no-console
-  console.warn("Warning: SIGNING_KEY is missing. SEP-10 challenge verification will be skipped.");
+    console.warn('Warning: SIGNING_KEY is missing. SEP-10 challenge verification will be skipped.');
   }
   if (!doc.TRANSFER_SERVER_SEP0024) {
     // eslint-disable-next-line no-console
-  console.warn("Warning: TRANSFER_SERVER_SEP0024 is missing. SEP-24 tests will be skipped.");
+    console.warn('Warning: TRANSFER_SERVER_SEP0024 is missing. SEP-24 tests will be skipped.');
   }
 
   return config;
